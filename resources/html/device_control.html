@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Control</title>
+</head>
+<body>
+
+<h2>Device Control</h2>
+
+<button onclick="controlDevice('2')">Action 1</button>
+<button onclick="controlDevice('abc')">Action ABC</button>
+
+<h3>Custom Action</h3>
+<input type="text" id="customActionInput" placeholder="Enter custom action">
+<button onclick="submitCustomAction()">Submit Custom Action</button>
+
+<h3>Response</h3>
+<textarea id="responseArea" rows="10" cols="50" readonly></textarea>
+
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const deviceUuid = urlParams.get('uuid');
+
+    async function controlDevice(action) {
+        const response = await sendActionRequest(action);
+        displayResponse(response);
+    }
+
+    async function submitCustomAction() {
+        const customActionInput = document.getElementById('customActionInput');
+        const action = customActionInput.value;
+        const response = await sendActionRequest(action);
+        displayResponse(response);
+        customActionInput.value = '';  // Clear the input field
+    }
+
+    async function sendActionRequest(action) {
+        const response = await fetch(`/device/audio?device_uuid=${deviceUuid}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                action: action
+            })
+        });
+
+        if (response.ok) {
+            return await response.text();
+        } else {
+            alert(`Error: ${response.status} ${response.statusText}`);
+            return '';
+        }
+    }
+
+    function displayResponse(response) {
+        const responseArea = document.getElementById('responseArea');
+        if (response === '')
+            responseArea.value = '<empty_response>';
+        else
+            responseArea.value = response;
+    }
+</script>
+
+</body>
+</html>

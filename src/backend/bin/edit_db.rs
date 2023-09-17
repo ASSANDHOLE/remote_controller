@@ -6,11 +6,18 @@ fn main() {
     // Load the config
     // Get the path to the current executable.
     let exe_path = std::env::current_exe().expect("Failed to get executable path");
-    let exe_dir = exe_path.parent().expect("Failed to get directory of executable");
+    let exe_dir = exe_path
+        .parent()
+        .expect("Failed to get directory of executable");
     let config_path = exe_dir.join("config.toml");
     let contents = std::fs::read_to_string(config_path).expect("Failed to read config file");
-    let config: HashMap<String, HashMap<String, String>> = toml::from_str(&contents).expect("Failed to parse config file");
-    let db_path = config.get("database").unwrap().get("path").expect("Failed to get database path");
+    let config: HashMap<String, HashMap<String, String>> =
+        toml::from_str(&contents).expect("Failed to parse config file");
+    let db_path = config
+        .get("database")
+        .unwrap()
+        .get("path")
+        .expect("Failed to get database path");
 
     loop {
         println!("Select an option:");
@@ -45,13 +52,19 @@ fn create_database(db_path: &str) {
 
     let create_users = connection.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL, token TEXT, valid TIMESTAMP)", ());
     if create_users.is_err() {
-        println!("Failed to create users table: {}", create_users.err().unwrap());
+        println!(
+            "Failed to create users table: {}",
+            create_users.err().unwrap()
+        );
         return;
     }
 
     let create_devices = connection.execute("CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, user_id INTEGER, device_name TEXT NOT NULL, device_status INTEGER NOT NULL, uuid TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))", ());
     if create_devices.is_err() {
-        println!("Failed to create devices table: {}", create_devices.err().unwrap());
+        println!(
+            "Failed to create devices table: {}",
+            create_devices.err().unwrap()
+        );
         return;
     }
     println!("Databases created!");
@@ -69,7 +82,12 @@ fn add_user(db_path: &str) {
 
     let hashed_password = bcrypt::hash(password.trim(), bcrypt::DEFAULT_COST).unwrap();
     let connection = Connection::open(db_path).unwrap();
-    let res = connection.execute("INSERT INTO users (username, password) VALUES (?1, ?2)", &[&username.trim(), &hashed_password.as_str()]).unwrap();
+    let res = connection
+        .execute(
+            "INSERT INTO users (username, password) VALUES (?1, ?2)",
+            &[&username.trim(), &hashed_password.as_str()],
+        )
+        .unwrap();
     if res == 1 {
         println!("User added!");
     } else {
@@ -90,13 +108,17 @@ fn delete_user(db_path: &str) {
         println!("Enter username:");
         io::stdin().read_line(&mut username).unwrap();
         // Find the user ID
-        let mut statement = connection.prepare("SELECT id FROM users WHERE username = ?1").unwrap();
+        let mut statement = connection
+            .prepare("SELECT id FROM users WHERE username = ?1")
+            .unwrap();
         let mut rows = statement.query(&[&username.trim()]).unwrap();
         let row = rows.next().unwrap().unwrap();
         uid = row.get(0).unwrap();
     }
 
-    let res =connection.execute("DELETE FROM users WHERE id = ?1", &[&uid.trim()]).unwrap();
+    let res = connection
+        .execute("DELETE FROM users WHERE id = ?1", &[&uid.trim()])
+        .unwrap();
     if res == 1 {
         println!("User deleted!");
     } else {
@@ -141,13 +163,17 @@ fn delete_device(db_path: &str) {
         println!("Enter device UUID:");
         io::stdin().read_line(&mut device_uuid).unwrap();
         // Find the user ID
-        let mut statement = connection.prepare("SELECT id FROM devices WHERE uuid = ?1").unwrap();
+        let mut statement = connection
+            .prepare("SELECT id FROM devices WHERE uuid = ?1")
+            .unwrap();
         let mut rows = statement.query(&[&device_uuid.trim()]).unwrap();
         let row = rows.next().unwrap().unwrap();
         uid = row.get(0).unwrap();
     }
 
-    let res = connection.execute("DELETE FROM devices WHERE id = ?1", &[&uid.trim()]).unwrap();
+    let res = connection
+        .execute("DELETE FROM devices WHERE id = ?1", &[&uid.trim()])
+        .unwrap();
     if res == 1 {
         println!("Device deleted!");
     } else {
@@ -178,17 +204,21 @@ fn list_device(db_path: &str) {
         let id: i32 = row.get(0).unwrap();
         let username: String = row.get(1).unwrap();
         println!("ID: {}, Username: {}", id, username);
-        let mut statement = connection.prepare("SELECT * FROM devices WHERE user_id = ?1").unwrap();
+        let mut statement = connection
+            .prepare("SELECT * FROM devices WHERE user_id = ?1")
+            .unwrap();
         let mut rows = statement.query(&[&id]).unwrap();
         while let Some(row) = rows.next().unwrap() {
             let id: i32 = row.get(0).unwrap();
             let device_name: String = row.get(2).unwrap();
             let device_status: i32 = row.get(3).unwrap();
             let uuid: String = row.get(4).unwrap();
-            println!("\tID: {}, Device Name: {}, Device Status: {}, UUID: {}", id, device_name, device_status, uuid);
+            println!(
+                "\tID: {}, Device Name: {}, Device Status: {}, UUID: {}",
+                id, device_name, device_status, uuid
+            );
         }
     }
 
     println!("End of list");
 }
-

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Control Panel</title>
+</head>
+<body>
+
+<h2>Login</h2>
+<form id="loginForm">
+    <label for="username">Username:</label>
+    <input type="text" id="username" name="username"><br><br>
+
+    <label for="password">Password:</label>
+    <input type="password" id="password" name="password"><br><br>
+
+    <input type="button" value="Login" onclick="login()">
+</form>
+
+<h2>Devices</h2>
+<button onclick="listDevices()">List Devices</button>
+<ul id="devicesList"></ul>
+
+<h2>Logout</h2>
+<button onclick="logout()">Logout</button>
+
+<script>
+    let token = "";
+
+    async function login() {
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+
+        const response = await fetch('/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username: username,
+                password: password
+            })
+        });
+
+        if (response.ok) {
+            alert('Login successful!');
+        } else {
+            alert('Login failed!');
+        }
+    }
+
+    async function listDevices() {
+        const response = await fetch('/devices', {
+            method: 'GET',
+        });
+
+        if (response.ok) {
+            const devices = await response.json();
+            const devicesList = document.getElementById('devicesList');
+            devicesList.innerHTML = '';
+            devices.forEach(device => {
+                const li = document.createElement('li');
+                li.textContent = `${device.device_name} (Status: ${device.device_status}) - UUID: ${device.uuid}`;
+                li.onclick = () => window.location.href = `/device_control.html?uuid=${device.uuid}`;  // Redirect to the control page
+                devicesList.appendChild(li);
+            });
+        } else {
+            alert('Failed to list devices!');
+        }
+    }
+
+
+    async function logout() {
+        const response = await fetch('/logout', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token
+            }
+        });
+
+        if (response.ok) {
+            token = "";
+            alert('Logged out successfully!');
+        } else {
+            alert('Logout failed!');
+        }
+    }
+</script>
+
+</body>
+</html>
