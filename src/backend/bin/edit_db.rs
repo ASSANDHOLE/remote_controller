@@ -1,6 +1,7 @@
-use rusqlite::Connection;
 use std::collections::HashMap;
 use std::io;
+
+use rusqlite::Connection;
 
 fn main() {
     // Load the config
@@ -59,7 +60,7 @@ fn create_database(db_path: &str) {
         return;
     }
 
-    let create_devices = connection.execute("CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, user_id INTEGER, device_name TEXT NOT NULL, device_status INTEGER NOT NULL, uuid TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))", ());
+    let create_devices = connection.execute("CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, user_id INTEGER, device_name TEXT NOT NULL, uuid TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))", ());
     if create_devices.is_err() {
         println!(
             "Failed to create devices table: {}",
@@ -116,6 +117,16 @@ fn delete_user(db_path: &str) {
         uid = row.get(0).unwrap();
     }
 
+    // Delete any devices associated with the user
+    let res = connection
+        .execute("DELETE FROM devices WHERE user_id = ?1", &[&uid.trim()])
+        .unwrap();
+    if res == 1 {
+        println!("Devices deleted!");
+    } else {
+        println!("Failed to delete devices!");
+    }
+
     let res = connection
         .execute("DELETE FROM users WHERE id = ?1", &[&uid.trim()])
         .unwrap();
@@ -141,7 +152,7 @@ fn add_device(db_path: &str) {
     io::stdin().read_line(&mut device_name).unwrap();
 
     let connection = Connection::open(db_path).unwrap();
-    let res = connection.execute("INSERT INTO devices (user_id, device_name, device_status, uuid) VALUES (?1, ?2, ?3, ?4)", &[&uid.trim(), &device_name.trim(), &"0", &device_uuid.trim()]).unwrap();
+    let res = connection.execute("INSERT INTO devices (user_id, device_name, uuid) VALUES (?1, ?2, ?3)", &[&uid.trim(), &device_name.trim(), &device_uuid.trim()]).unwrap();
 
     if res == 1 {
         println!("Device added!");
@@ -168,7 +179,8 @@ fn delete_device(db_path: &str) {
             .unwrap();
         let mut rows = statement.query(&[&device_uuid.trim()]).unwrap();
         let row = rows.next().unwrap().unwrap();
-        uid = row.get(0).unwrap();
+        let int_uid: i32 = row.get(0).unwrap();
+        uid = int_uid.to_string();
     }
 
     let res = connection
@@ -211,11 +223,10 @@ fn list_device(db_path: &str) {
         while let Some(row) = rows.next().unwrap() {
             let id: i32 = row.get(0).unwrap();
             let device_name: String = row.get(2).unwrap();
-            let device_status: i32 = row.get(3).unwrap();
-            let uuid: String = row.get(4).unwrap();
+            let uuid: String = row.get(3).unwrap();
             println!(
-                "\tID: {}, Device Name: {}, Device Status: {}, UUID: {}",
-                id, device_name, device_status, uuid
+                "\tID: {}, Device Name: {}, UUID: {}",
+                id, device_name, uuid
             );
         }
     }

@@ -1,12 +1,18 @@
+use std::collections::{HashMap, VecDeque};
+
 use chrono::{DateTime, NaiveDateTime};
+use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use lazy_static::lazy_static;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use tokio::sync::{mpsc, RwLock};
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use uuid::Uuid;
+use warp::ws::{Message, WebSocket};
 use warp::Filter;
 
-const SECRET_KEY: &str = "super_secret_key";
+// const SECRET_KEY: &str = "super_secret_key";
 
 lazy_static! {
     static ref CONFIG: HashMap<String, HashMap<String, String>> = {
@@ -38,6 +44,24 @@ lazy_static! {
             _ => panic!("Invalid unit of cookie valid duration")
         }
     };
+    static ref CHECK_TIMEOUT: i32 = {
+        let timeout = CONFIG.get("device").unwrap().get("check_timeout").expect("Failed to get device check timeout");
+        timeout.parse::<i32>().expect("Failed to parse device check timeout")
+    };
+    static ref QUEUE_SIZE: usize = {
+        let size = CONFIG.get("device").unwrap().get("queue_size").expect("Failed to get device queue size");
+        size.parse::<usize>().expect("Failed to parse device queue size")
+    };
+    static ref SECRET_KEY: String = {
+        let secret_key = CONFIG.get("server").unwrap().get("secret_key").expect("Failed to get server secret key");
+        secret_key.to_string()
+    };
+    static ref ENC_KEY: EncodingKey = {
+        EncodingKey::from_base64_secret(SECRET_KEY.as_ref()).expect("Failed to get encoding key")
+    };
+    static ref DEC_KEY: DecodingKey = {
+        DecodingKey::from_base64_secret(SECRET_KEY.as_ref()).expect("Failed to get decoding key")
+    };
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,7 +83,7 @@ struct UserInput {
     password: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Device {
     id: i32,
     device_name: String,
@@ -67,16 +91,62 @@ struct Device {
     uuid: String,
 }
 
-struct Action {
-    action_type: String,
-    device_uuid: String,
-}
-
+#[derive(Debug)]
 struct ExecResult {
-    status: i32,
+    status: i32, // 0: success, 1: failed, 2: timeout
     message: Option<String>,
     data: Option<String>,
 }
+
+#[derive(Debug)]
+struct ClientData {
+    status: bool,
+    transaction: Option<String>,
+    message: Option<String>,
+}
+
+struct BoundedClientDataQueue {
+    queue: VecDeque<ClientData>,
+    max_size: usize,
+}
+
+impl BoundedClientDataQueue {
+    fn new() -> BoundedClientDataQueue {
+        BoundedClientDataQueue {
+            queue: VecDeque::with_capacity(*QUEUE_SIZE),
+            max_size: *QUEUE_SIZE,
+        }
+    }
+
+    fn push(&mut self, data: ClientData) {
+        if self.queue.len() == self.max_size {
+            self.queue.pop_front();
+        }
+        self.queue.push_back(data);
+    }
+
+    fn get(&self, index: usize) -> Option<&ClientData> {
+        self.queue.get(index)
+    }
+
+    fn remove(&mut self, index: usize) {
+        self.queue.remove(index);
+    }
+
+    fn get_with_transaction(&self, transaction: &String) -> Option<(usize, &ClientData)> {
+        for (i, data) in self.queue.iter().enumerate() {
+            if let Some(last_transaction) = &data.transaction {
+                if last_transaction == transaction {
+                    return Some((i, data));
+                }
+            }
+        }
+        None
+    }
+}
+
+type Devices = std::sync::Arc<RwLock<HashMap<String, mpsc::UnboundedSender<Message>>>>;
+type ClientDataWithQueue = std::sync::Arc<RwLock<HashMap<String, BoundedClientDataQueue>>>;
 
 fn get_db_connection() -> Connection {
     Connection::open(DB_PATH.as_str()).unwrap()
@@ -114,7 +184,7 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
             let token = encode(
                 &Header::default(),
                 &claims,
-                &EncodingKey::from_secret(SECRET_KEY.as_ref()),
+                &ENC_KEY,
             )
             .unwrap();
 
@@ -149,7 +219,7 @@ fn verify_auth(token: String) -> Result<i32, warp::Rejection> {
     let validation = Validation::default();
     match decode::<Claims>(
         &token,
-        &DecodingKey::from_secret(SECRET_KEY.as_ref()),
+        &DEC_KEY,
         &validation,
     ) {
         Ok(token_data) => {
@@ -201,28 +271,39 @@ fn extract_token_from_cookie(cookie_header: &str) -> Option<String> {
     None
 }
 
-async fn list_devices(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
+async fn list_devices(cookie: String, device_map: Devices) -> Result<impl warp::Reply, warp::Rejection> {
     if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
         return match verify_auth(token) {
             Ok(user_id) => {
+                // TODO: debug
+                println!("User {} authenticated", user_id);
+
                 let connection = get_db_connection();
 
                 // Fetch devices for the user
-                let devices: Vec<Device> = connection
-                    .prepare("SELECT id, device_name, device_status, uuid FROM devices WHERE user_id = ?1")
+                let mut devices: Vec<Device> = connection
+                    .prepare("SELECT id, device_name, uuid FROM devices WHERE user_id = ?1")
                     .unwrap()
                     .query_map(&[&user_id], |row| {
                         Ok(Device {
                             id: row.get(0)?,
                             device_name: row.get(1)?,
-                            device_status: row.get(2)?,
-                            uuid: row.get(3)?,
+                            device_status: 0,
+                            uuid: row.get(2)?,
                         })
                     })
                     .unwrap()
                     .filter_map(Result::ok)
                     .collect();
-
+                // TODO: debug
+                println!("devices: {:?}", devices);
+                // Find the status of each device
+                let device_data = device_map.read().await;
+                for dev in devices.iter_mut() {
+                    if let Some(_) = device_data.get(&dev.uuid) {
+                        dev.device_status = 1;
+                    }
+                }
                 Ok(warp::http::Response::builder()
                     .status(warp::http::StatusCode::OK)
                     .body(serde_json::to_string(&devices).unwrap()))
@@ -236,35 +317,161 @@ async fn list_devices(cookie: String) -> Result<impl warp::Reply, warp::Rejectio
     }
 }
 
-async fn control_device(action: Action) -> ExecResult {
-    // TODO: Implement this function
+async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_queue: ClientDataWithQueue) {
+    let (mut device_ws_tx, mut device_ws_rx) = ws.split();
 
-    match action.action_type.parse::<i32>() {
-        Ok(_) => ExecResult {
-            status: 0,
-            message: Some(action.device_uuid),
-            data: None,
-        },
-        Err(_) => ExecResult {
-            status: 0,
-            message: None,
-            data: Some(action.action_type),
-        },
+    let mut device_uuid: String = String::new();
+
+    if let Some(Ok(msg)) = device_ws_rx.next().await {
+        if let Ok(duid) = msg.to_str() {
+            device_uuid = duid.to_string();
+            // Use an unbounded channel to handle buffering and flushing of messages
+            // to the websocket...
+            let (tx, rx) = mpsc::unbounded_channel();
+            let mut rx = UnboundedReceiverStream::new(rx);
+
+            tokio::task::spawn(async move {
+                while let Some(message) = rx.next().await {
+                    device_ws_tx
+                        .send(message)
+                        .unwrap_or_else(|_| {
+                            return;
+                        })
+                        .await;
+                }
+            });
+
+            // Save the sender in our list of connected devices.
+            devices.write().await.insert(
+                duid.to_string(),
+                tx,
+            );
+            client_data_with_queue.write().await.insert(
+                duid.to_string(),
+                BoundedClientDataQueue::new(),
+            );
+        }
     }
+
+    // TODO: debug
+    println!("Device {} connected", device_uuid);
+
+    // Handle further messages from the device...
+    while let Some(result) = device_ws_rx.next().await {
+        let mut flag: bool = false;
+        let mut x_json_obj: Option<serde_json::Map<String, serde_json::Value>> = None;
+        let mut x_transaction_str: String = String::new();
+        match result {
+            Ok(msg) => {
+                // To JSON
+                let msg = if let Ok(s) = msg.to_str() { s } else { break };
+                // TODO: debug
+                println!("Received message from device {}: {}", device_uuid, msg);
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(msg) {
+                    if let Some(json_obj) = json.as_object() {
+                        if let Some(transaction) = json_obj.get("transaction") {
+                            if let Some(transaction_str) = transaction.as_str() {
+                                flag = true;
+                                x_json_obj = Some(json_obj.clone());
+                                x_transaction_str = transaction_str.to_string();
+                            }
+                        }
+                    }
+                }
+                if flag{
+                    let mut client_data = client_data_with_queue.write().await;
+                    let data = client_data.get_mut(&device_uuid).unwrap();
+                    let message = x_json_obj.as_ref().unwrap().get("message").unwrap_or(&serde_json::Value::Null);
+                    // Beautify the message with indentation of 4 spaces
+                    let message_str = serde_json::to_string_pretty(message);
+                    let message_str = if let Ok(s) = message_str { Some(s) } else { None };
+                    data.push(ClientData {
+                        status: x_json_obj.as_ref().unwrap().get("status").unwrap_or(&serde_json::Value::Null).as_bool().unwrap_or(false),
+                        transaction: Some(x_transaction_str),
+                        message: message_str,
+                    });
+                }
+            }
+
+            Err(_) => {
+                // eprintln!("websocket error for device {}: {}", device_uuid, e);
+                break;
+            }
+        }
+    }
+
+    // When the device disconnects...
+    devices.write().await.remove(&device_uuid);
+    client_data_with_queue.write().await.remove(&device_uuid);
+
+    // TODO: debug
+    println!("Device {} disconnected", device_uuid);
 }
 
-async fn audio_control(cookie: String, query_params: HashMap<String, String>, action_map: HashMap<String, String>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn check_last_exec_status(
+    transaction: &String,
+    device_uuid: &String,
+    client_data_with_queue: ClientDataWithQueue,
+) -> (bool, bool, Option<String>) {
+    // TODO: debug
+    println!("Checking status for transaction {} on device {}", transaction, device_uuid);
+
+    let mut flag = false;
+    let mut status = false;
+    let mut message: Option<String> = None;
+    let start_time = chrono::Utc::now().timestamp();
+    while chrono::Utc::now().timestamp() - start_time < *CHECK_TIMEOUT as i64 {
+        // TODO: debug
+        println!("Try to get read lock");
+        if let Some(device_data) = client_data_with_queue.write().await.get_mut(device_uuid) {
+            // TODO: debug
+            println!("Got read lock");
+            if let Some((id, data)) = device_data.get_with_transaction(transaction) {
+                // TODO: debug
+                println!("data: {:?}", data);
+                flag = true;
+                status = data.status;
+                message = data.message.clone();
+                device_data.remove(id);
+                break;
+            }
+        }
+
+        // TODO: debug
+        println!("Waiting for transaction {} on device {}, time left(sec) {}", transaction, device_uuid, *CHECK_TIMEOUT as i64 - chrono::Utc::now().timestamp() + start_time);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // TODO: debug
+        println!("Woke up");
+    }
+    // TODO: debug
+    if chrono::Utc::now().timestamp() - start_time < *CHECK_TIMEOUT as i64 {
+        println!("Timeout");
+    }
+    (flag, status, message)
+}
+
+async fn device_control(
+    cookie: String,
+    query_params: HashMap<String, String>,
+    action_map: HashMap<String, String>,
+    devices: Devices,
+    client_data_with_queue: ClientDataWithQueue,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let device_uuid = match query_params.get("device_uuid") {
         Some(uuid) => uuid.trim().to_string(),
-        None => return Ok(warp::http::Response::builder()
-            .status(warp::http::StatusCode::BAD_REQUEST)
-            .body("Missing device_uuid.".to_string()))
+        None => {
+            return Ok(warp::http::Response::builder()
+                .status(warp::http::StatusCode::BAD_REQUEST)
+                .body("Missing device_uuid.".to_string()))
+        }
     };
     let action = match action_map.get("action") {
         Some(action) => action.trim().to_string(),
-        None => return Ok(warp::http::Response::builder()
-            .status(warp::http::StatusCode::BAD_REQUEST)
-            .body("Missing action.".to_string()))
+        None => {
+            return Ok(warp::http::Response::builder()
+                .status(warp::http::StatusCode::BAD_REQUEST)
+                .body("Missing action.".to_string()))
+        }
     };
     if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
         let mut flag = false;
@@ -287,11 +494,47 @@ async fn audio_control(cookie: String, query_params: HashMap<String, String>, ac
             Err(rej) => return Err(rej),
         };
         if flag {
-            // Control the device
-            let result = control_device(Action {
-                action_type: action,
-                device_uuid,
-            }).await;
+            let transaction = Uuid::new_v4().to_string();
+            let mut device_data = devices.write().await;
+            let device = device_data.get_mut(&device_uuid).unwrap();
+            let mut send_error = false;
+            device
+                .send(Message::text(
+                    serde_json::json!({
+                        "transaction": transaction,
+                        "action": action,
+                    })
+                    .to_string(),
+                ))
+                .unwrap_or_else(|_| {
+                    send_error = true;
+                });
+            if send_error {
+                return Ok(warp::http::Response::builder()
+                    .status(warp::http::StatusCode::SERVICE_UNAVAILABLE)
+                    .body("Cannot send message to device.".to_string()));
+            }
+            drop(device_data);
+            let (f, s, m) =
+                check_last_exec_status(&transaction, &device_uuid, client_data_with_queue.clone()).await;
+            let mut result = ExecResult {
+                status: 0,
+                message: None,
+                data: None,
+            };
+
+            if !f {
+                result.status = 2; // timeout
+            } else if !s {
+                result.status = 1; // failed
+                result.message = m;
+            } else {
+                result.status = 0; // success
+                result.data = m;
+            }
+
+            // TODO: debug
+            println!("Result: {:?}", result);
 
             // Construct the response
             if result.status == 0 {
@@ -340,14 +583,21 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
 
 #[tokio::main]
 async fn main() {
+    let devices: Devices = std::sync::Arc::new(RwLock::new(HashMap::new()));
+    let devices = warp::any().map(move || devices.clone());
+
+    let client_data_with_queue: ClientDataWithQueue = std::sync::Arc::new(RwLock::new(HashMap::new()));
+    let client_data_with_queue = warp::any().map(move || client_data_with_queue.clone());
+
     let login_route = warp::path("login")
         .and(warp::post())
         .and(warp::body::json())
         .and_then(login);
 
-    let devices_route = warp::path("devices")
+    let devices_route = warp::path("ls_devices")
         .and(warp::get())
         .and(warp::header("cookie"))
+        .and(devices.clone())
         .and_then(list_devices);
 
     let logout_route = warp::path("logout")
@@ -355,21 +605,31 @@ async fn main() {
         .and(warp::header("cookie"))
         .and_then(logout);
 
-    let audio_control_route = warp::path("device")
-        .and(warp::path("audio"))
-        .and(warp::post())  // Assuming you want to use GET; if not, change this to .post() or .put() as required
+    let device_control_route = warp::path("device")
+        .and(warp::post())
         .and(warp::header("cookie"))
-        .and(warp::query::<HashMap<String, String>>())  // This will parse the device_uuid from the query parameters
-        .and(warp::body::json())  // This will parse the action from the JSON body
-        .and_then(audio_control);
+        .and(warp::query::<HashMap<String, String>>())
+        .and(warp::body::json())
+        .and(devices.clone())
+        .and(client_data_with_queue.clone())
+        .and_then(device_control);
 
+    let ws_route =
+        warp::path("ws")
+            .and(warp::ws())
+            .and(devices)
+            .and(client_data_with_queue)
+            .map(move |ws: warp::ws::Ws, devices, cq| {
+                ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
+            });
 
     let html_dir_route = warp::fs::dir(HTML_DIR_PATH.as_str());
 
     let routes = login_route
         .or(devices_route)
         .or(logout_route)
-        .or(audio_control_route)
+        .or(device_control_route)
+        .or(ws_route)
         .or(html_dir_route);
 
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;

@@ -1,5 +1,0 @@
-[database]
-path = "C:\\UPath\\To\\db.sqlite3"
-
-[html]
-path = "C:\\Path\\To\\index.html"

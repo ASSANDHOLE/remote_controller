@@ -4,40 +4,53 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Device Control</title>
+    <style>
+        #responseArea {
+            white-space: pre-wrap;  /* Preserves whitespace and newlines */
+        }
+    </style>
 </head>
 <body>
 
 <h2>Device Control</h2>
 
-<button onclick="controlDevice('2')">Action 1</button>
-<button onclick="controlDevice('abc')">Action ABC</button>
+<button onclick="controlDevice('audio vol_up')">Vol Up</button>
+<button onclick="controlDevice('audio vol_down')">Vol Down</button>
+<button onclick="controlDevice('audio vol_mute')">Mute</button>
+<button onclick="controlDevice('audio pulse')">Pulse</button>
+<button onclick="controlDevice('audio next_track')">Next Track</button>
+<button onclick="controlDevice('audio prev_track')">Prev Track</button>
 
-<h3>Custom Action</h3>
+<h3>Execute Command (Will search in PATH)</h3>
 <input type="text" id="customActionInput" placeholder="Enter custom action">
 <button onclick="submitCustomAction()">Submit Custom Action</button>
 
 <h3>Response</h3>
-<textarea id="responseArea" rows="10" cols="50" readonly></textarea>
+<textarea id="responseArea" rows="30" cols="80" readonly></textarea>
+
+<h3>Back to Index</h3>
+<button onclick="window.location.href = '/';">Back to Index</button>
 
 <script>
     const urlParams = new URLSearchParams(window.location.search);
     const deviceUuid = urlParams.get('uuid');
 
     async function controlDevice(action) {
-        const response = await sendActionRequest(action);
-        displayResponse(response);
+        await sendActionRequest(action);
     }
 
     async function submitCustomAction() {
         const customActionInput = document.getElementById('customActionInput');
-        const action = customActionInput.value;
-        const response = await sendActionRequest(action);
-        displayResponse(response);
+        let action = customActionInput.value;
+        if (action !== "" && !action.startsWith("audio")) {
+            action = "exec " + action;
+        }
+        await sendActionRequest(action);
         customActionInput.value = '';  // Clear the input field
     }
 
     async function sendActionRequest(action) {
-        const response = await fetch(`/device/audio?device_uuid=${deviceUuid}`, {
+        const response = await fetch(`/device?device_uuid=${deviceUuid}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -48,19 +61,30 @@
         });
 
         if (response.ok) {
-            return await response.text();
+            let responseBody;
+            try {
+                responseBody = await response.json();
+            } catch {
+                responseBody = await response.text();
+            }
+            displayResponse(responseBody);
         } else {
             alert(`Error: ${response.status} ${response.statusText}`);
-            return '';
         }
     }
 
     function displayResponse(response) {
         const responseArea = document.getElementById('responseArea');
-        if (response === '')
-            responseArea.value = '<empty_response>';
-        else
-            responseArea.value = response;
+        if (typeof response === "string") {
+            responseArea.style.color = "red";
+            responseArea.value = response || '<empty_response>';
+        } else if (response.execution && response.success) {
+            responseArea.style.color = "black";
+            responseArea.value = response.output || '<empty_response>';
+        } else if (response.execution) {
+            responseArea.style.color = "yellow";
+            responseArea.value = response.output || '<empty_response>';
+        }
     }
 </script>
 
