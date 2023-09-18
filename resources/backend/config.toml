@@ -15,3 +15,4 @@ queue_size = "10"
 # This key should be Base64 encoded
 # Could use https://generate-random.org/encryption-key-generator?count=1&bytes=256&cipher=aes-256-cbc&string=&password=
 secret_key = "ORmZjYdlGypX+wOtpjeKRqJUg3iXSYPhZet8RXcWdVL5ezJbiOmKFq+OGu8M/LTNjTm4Xyi/tmUv4GLIbHEm35YcfVBo2p9lHWjf0iOPmGusr4LPAIZMrcrcWDf2E1B776jDjt8sv/EmrvwcLjxqxSkyGTY1+NZJsJb9ln0EVTv+XSpZ17te0i5q3y/PeadNig6M3HLZO4pcbo6bt6BFRpkblMX05sBUD0Bj+rL9oYIwY8/RYLE+Pb8ahL4sx9iNePoS5wOdJtngmIJ/c0iC123Aga6qwUAhZmyzO72knkWOffL+qT/mxG5Kfw+WVHpdLCDuNtdPcTjY95a8mH4jgcjaBiDpxcdXZm4NdhaTqq4="
+serve_addr = "0.0.0.0:3030"

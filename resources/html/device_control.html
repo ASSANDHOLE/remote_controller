@@ -50,7 +50,7 @@
     }
 
     async function sendActionRequest(action) {
-        const response = await fetch(`/device?device_uuid=${deviceUuid}`, {
+        const response = await fetch(`/api/device?device_uuid=${deviceUuid}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -81,9 +81,12 @@
         } else if (response.execution && response.success) {
             responseArea.style.color = "black";
             responseArea.value = response.output || '<empty_response>';
-        } else if (response.execution) {
-            responseArea.style.color = "yellow";
+        } else if (response.success) {
+            responseArea.style.color = "orange";
             responseArea.value = response.output || '<empty_response>';
+        } else {
+            responseArea.style.color = "red";
+            responseArea.value = JSON.stringify(response, null, 2);
         }
     }
 </script>

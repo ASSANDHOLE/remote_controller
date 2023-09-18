@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
 
 use chrono::{DateTime, NaiveDateTime};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
@@ -61,6 +62,10 @@ lazy_static! {
     };
     static ref DEC_KEY: DecodingKey = {
         DecodingKey::from_base64_secret(SECRET_KEY.as_ref()).expect("Failed to get decoding key")
+    };
+    static ref SERVE_ADDR: SocketAddr = {
+        let serve_addr = CONFIG.get("server").unwrap().get("serve_addr").expect("Failed to get server serve address");
+        serve_addr.parse::<SocketAddr>().expect("Failed to parse server serve address")
     };
 }
 
@@ -275,8 +280,6 @@ async fn list_devices(cookie: String, device_map: Devices) -> Result<impl warp::
     if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
         return match verify_auth(token) {
             Ok(user_id) => {
-                // TODO: debug
-                println!("User {} authenticated", user_id);
 
                 let connection = get_db_connection();
 
@@ -295,8 +298,6 @@ async fn list_devices(cookie: String, device_map: Devices) -> Result<impl warp::
                     .unwrap()
                     .filter_map(Result::ok)
                     .collect();
-                // TODO: debug
-                println!("devices: {:?}", devices);
                 // Find the status of each device
                 let device_data = device_map.read().await;
                 for dev in devices.iter_mut() {
@@ -353,8 +354,6 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
         }
     }
 
-    // TODO: debug
-    println!("Device {} connected", device_uuid);
 
     // Handle further messages from the device...
     while let Some(result) = device_ws_rx.next().await {
@@ -365,8 +364,6 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
             Ok(msg) => {
                 // To JSON
                 let msg = if let Ok(s) = msg.to_str() { s } else { break };
-                // TODO: debug
-                println!("Received message from device {}: {}", device_uuid, msg);
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(msg) {
                     if let Some(json_obj) = json.as_object() {
                         if let Some(transaction) = json_obj.get("transaction") {
@@ -404,8 +401,6 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
     devices.write().await.remove(&device_uuid);
     client_data_with_queue.write().await.remove(&device_uuid);
 
-    // TODO: debug
-    println!("Device {} disconnected", device_uuid);
 }
 
 async fn check_last_exec_status(
@@ -413,22 +408,14 @@ async fn check_last_exec_status(
     device_uuid: &String,
     client_data_with_queue: ClientDataWithQueue,
 ) -> (bool, bool, Option<String>) {
-    // TODO: debug
-    println!("Checking status for transaction {} on device {}", transaction, device_uuid);
 
     let mut flag = false;
     let mut status = false;
     let mut message: Option<String> = None;
     let start_time = chrono::Utc::now().timestamp();
     while chrono::Utc::now().timestamp() - start_time < *CHECK_TIMEOUT as i64 {
-        // TODO: debug
-        println!("Try to get read lock");
         if let Some(device_data) = client_data_with_queue.write().await.get_mut(device_uuid) {
-            // TODO: debug
-            println!("Got read lock");
             if let Some((id, data)) = device_data.get_with_transaction(transaction) {
-                // TODO: debug
-                println!("data: {:?}", data);
                 flag = true;
                 status = data.status;
                 message = data.message.clone();
@@ -437,15 +424,7 @@ async fn check_last_exec_status(
             }
         }
 
-        // TODO: debug
-        println!("Waiting for transaction {} on device {}, time left(sec) {}", transaction, device_uuid, *CHECK_TIMEOUT as i64 - chrono::Utc::now().timestamp() + start_time);
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        // TODO: debug
-        println!("Woke up");
-    }
-    // TODO: debug
-    if chrono::Utc::now().timestamp() - start_time < *CHECK_TIMEOUT as i64 {
-        println!("Timeout");
     }
     (flag, status, message)
 }
@@ -533,8 +512,6 @@ async fn device_control(
                 result.data = m;
             }
 
-            // TODO: debug
-            println!("Result: {:?}", result);
 
             // Construct the response
             if result.status == 0 {
@@ -581,6 +558,21 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
         .body("Logged out."))
 }
 
+fn authenticated() -> impl Filter<Extract = (), Error = warp::Rejection> + Copy {
+    warp::header::<String>("cookie").and_then(|cookie: String| async move {
+        if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
+            match verify_auth(token) {
+                Ok(_) => Ok(()),
+                Err(rej) => Err(rej),
+            }
+        } else {
+            Err(warp::reject::custom(InvalidParameter {
+                message: "Invalid token.".to_string(),
+            }))
+        }
+    }).untuple_one()
+}
+
 #[tokio::main]
 async fn main() {
     let devices: Devices = std::sync::Arc::new(RwLock::new(HashMap::new()));
@@ -589,23 +581,27 @@ async fn main() {
     let client_data_with_queue: ClientDataWithQueue = std::sync::Arc::new(RwLock::new(HashMap::new()));
     let client_data_with_queue = warp::any().map(move || client_data_with_queue.clone());
 
-    let login_route = warp::path("login")
+    let login_route = warp::path("api")
+        .and(warp::path("login"))
         .and(warp::post())
         .and(warp::body::json())
         .and_then(login);
 
-    let devices_route = warp::path("ls_devices")
+    let devices_route = warp::path("api")
+        .and(warp::path("ls_devices"))
         .and(warp::get())
         .and(warp::header("cookie"))
         .and(devices.clone())
         .and_then(list_devices);
 
-    let logout_route = warp::path("logout")
+    let logout_route = warp::path("api")
+        .and(warp::path("logout"))
         .and(warp::post())
         .and(warp::header("cookie"))
         .and_then(logout);
 
-    let device_control_route = warp::path("device")
+    let device_control_route = warp::path("api")
+        .and(warp::path("device"))
         .and(warp::post())
         .and(warp::header("cookie"))
         .and(warp::query::<HashMap<String, String>>())
@@ -623,14 +619,26 @@ async fn main() {
                 ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
             });
 
-    let html_dir_route = warp::fs::dir(HTML_DIR_PATH.as_str());
+    let html_login_route1 = warp::path("login.html")
+        .and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())));
+
+    let html_login_route2 = warp::path("login")
+        .and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())));
+
+    let html_dir_route = warp::get()
+        .and(authenticated())
+        .and(warp::fs::dir(HTML_DIR_PATH.as_str()))
+        // or redirect to login page
+        .or(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html"))));
 
     let routes = login_route
         .or(devices_route)
         .or(logout_route)
         .or(device_control_route)
         .or(ws_route)
+        .or(html_login_route1)
+        .or(html_login_route2)
         .or(html_dir_route);
 
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(routes).run(SERVE_ADDR.clone()).await;
 }

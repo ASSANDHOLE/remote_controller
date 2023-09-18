@@ -91,8 +91,6 @@ fn processing_audio_setting(action: &String) -> bool {
 }
 
 fn exec_get_output(command: &String) -> Option<(bool, String)> {
-    // TODO: debug
-    println!("exec_get_output: {}", command);
 
     let mut args: Vec<&str> = command.split_whitespace().collect();
 
@@ -136,8 +134,6 @@ fn exec_get_output(command: &String) -> Option<(bool, String)> {
         args.remove(0).to_string()
     };
 
-    // TODO: debug
-    println!("actual_executing: {} {:?}", cmd, args);
 
     let output = Command::new(cmd)
         .args(&args)
