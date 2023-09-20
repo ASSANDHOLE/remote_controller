@@ -99,7 +99,6 @@ fn processing_audio_setting(action: &String, config: &Config) -> bool {
 }
 
 fn exec_get_output(command: &String) -> Option<(bool, String)> {
-
     let mut args: Vec<&str> = command.split_whitespace().collect();
 
     // Remove `exec` from the args
@@ -146,17 +145,14 @@ fn exec_get_output(command: &String) -> Option<(bool, String)> {
         args.remove(0).to_string()
     };
 
-
-    let output = Command::new(cmd)
-        .args(&args)
-        .output();
+    let output = Command::new(cmd).args(&args).output();
 
     if let Ok(output) = output {
         return if output.status.success() {
             Some((true, String::from_utf8_lossy(&output.stdout).to_string()))
         } else {
             Some((false, String::from_utf8_lossy(&output.stderr).to_string()))
-        }
+        };
     }
 
     None
@@ -186,7 +182,6 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
     ///   { transaction: str, status: true, message: { success: bool, execution: bool, output: str } }
     ///   { transaction: str, status: false, message: { cause: str } }
     ///
-
     let msg_str = msg.to_text().unwrap_or("");
     if msg_str.is_empty() {
         return None;

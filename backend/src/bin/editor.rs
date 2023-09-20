@@ -172,7 +172,12 @@ fn add_device(db_path: &str) {
     io::stdin().read_line(&mut device_name).unwrap();
 
     let connection = Connection::open(db_path).unwrap();
-    let res = connection.execute("INSERT INTO devices (user_id, device_name, uuid) VALUES (?1, ?2, ?3)", &[&uid.trim(), &device_name.trim(), &device_uuid.trim()]).unwrap();
+    let res = connection
+        .execute(
+            "INSERT INTO devices (user_id, device_name, uuid) VALUES (?1, ?2, ?3)",
+            &[&uid.trim(), &device_name.trim(), &device_uuid.trim()],
+        )
+        .unwrap();
 
     if res == 1 {
         println!("Device added!");
@@ -244,10 +249,7 @@ fn list_device(db_path: &str) {
             let id: i32 = row.get(0).unwrap();
             let device_name: String = row.get(2).unwrap();
             let uuid: String = row.get(3).unwrap();
-            println!(
-                "\tID: {}, Device Name: {}, UUID: {}",
-                id, device_name, uuid
-            );
+            println!("\tID: {}, Device Name: {}, UUID: {}", id, device_name, uuid);
         }
     }
 

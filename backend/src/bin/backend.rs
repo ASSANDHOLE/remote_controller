@@ -166,11 +166,7 @@ fn get_utc_timestamp(time_stamp_str: &str) -> i64 {
 
 fn remove_expired_tokens(user_id: i32, connection: &Connection) {
     // Remove expired tokens
-    let past_time = get_utc_timestamp_str(
-        chrono::Utc::now()
-            .naive_utc()
-            .timestamp(),
-    );
+    let past_time = get_utc_timestamp_str(chrono::Utc::now().naive_utc().timestamp());
     connection
         .execute(
             "DELETE FROM cookies WHERE user_id = ?1 AND valid < ?2",
@@ -197,12 +193,7 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
                 sub: user_id.to_string(),
                 exp: expiration,
             };
-            let token = encode(
-                &Header::default(),
-                &claims,
-                &ENC_KEY,
-            )
-            .unwrap();
+            let token = encode(&Header::default(), &claims, &ENC_KEY).unwrap();
 
             // Store the token in the database with the expiration time
             connection
@@ -235,11 +226,7 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
 
 fn verify_auth(token: String) -> Result<i32, warp::Rejection> {
     let validation = Validation::default();
-    match decode::<Claims>(
-        &token,
-        &DEC_KEY,
-        &validation,
-    ) {
+    match decode::<Claims>(&token, &DEC_KEY, &validation) {
         Ok(token_data) => {
             let user_id: i32 = token_data.claims.sub.parse().unwrap_or(0);
             let connection = get_db_connection();
@@ -252,7 +239,8 @@ fn verify_auth(token: String) -> Result<i32, warp::Rejection> {
                 stmt.query_row((&user_id, &token), |row| Ok(row.get(0)?));
 
             if let Ok(valid_until) = db_data {
-                return if chrono::Utc::now().timestamp() <= get_utc_timestamp(valid_until.as_str()) {
+                return if chrono::Utc::now().timestamp() <= get_utc_timestamp(valid_until.as_str())
+                {
                     remove_expired_tokens(user_id, &connection);
                     Ok(user_id)
                 } else {
@@ -285,11 +273,13 @@ fn extract_token_from_cookie(cookie_header: &str) -> Option<String> {
     None
 }
 
-async fn list_devices(cookie: String, device_map: Devices) -> Result<impl warp::Reply, warp::Rejection> {
+async fn list_devices(
+    cookie: String,
+    device_map: Devices,
+) -> Result<impl warp::Reply, warp::Rejection> {
     if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
         return match verify_auth(token) {
             Ok(user_id) => {
-
                 let connection = get_db_connection();
 
                 // Fetch devices for the user
@@ -327,7 +317,11 @@ async fn list_devices(cookie: String, device_map: Devices) -> Result<impl warp::
     }
 }
 
-async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_queue: ClientDataWithQueue) {
+async fn handle_connection(
+    ws: WebSocket,
+    devices: Devices,
+    client_data_with_queue: ClientDataWithQueue,
+) {
     let (mut device_ws_tx, mut device_ws_rx) = ws.split();
 
     let mut device_uuid: String = String::new();
@@ -352,17 +346,13 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
             });
 
             // Save the sender in our list of connected devices.
-            devices.write().await.insert(
-                duid.to_string(),
-                tx,
-            );
-            client_data_with_queue.write().await.insert(
-                duid.to_string(),
-                BoundedClientDataQueue::new(),
-            );
+            devices.write().await.insert(duid.to_string(), tx);
+            client_data_with_queue
+                .write()
+                .await
+                .insert(duid.to_string(), BoundedClientDataQueue::new());
         }
     }
-
 
     // Handle further messages from the device...
     while let Some(result) = device_ws_rx.next().await {
@@ -384,15 +374,29 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
                         }
                     }
                 }
-                if flag{
+                if flag {
                     let mut client_data = client_data_with_queue.write().await;
                     let data = client_data.get_mut(&device_uuid).unwrap();
-                    let message = x_json_obj.as_ref().unwrap().get("message").unwrap_or(&serde_json::Value::Null);
+                    let message = x_json_obj
+                        .as_ref()
+                        .unwrap()
+                        .get("message")
+                        .unwrap_or(&serde_json::Value::Null);
                     // Beautify the message with indentation of 4 spaces
                     let message_str = serde_json::to_string_pretty(message);
-                    let message_str = if let Ok(s) = message_str { Some(s) } else { None };
+                    let message_str = if let Ok(s) = message_str {
+                        Some(s)
+                    } else {
+                        None
+                    };
                     data.push(ClientData {
-                        status: x_json_obj.as_ref().unwrap().get("status").unwrap_or(&serde_json::Value::Null).as_bool().unwrap_or(false),
+                        status: x_json_obj
+                            .as_ref()
+                            .unwrap()
+                            .get("status")
+                            .unwrap_or(&serde_json::Value::Null)
+                            .as_bool()
+                            .unwrap_or(false),
                         transaction: Some(x_transaction_str),
                         message: message_str,
                     });
@@ -409,7 +413,6 @@ async fn handle_connection(ws: WebSocket, devices: Devices, client_data_with_que
     // When the device disconnects...
     devices.write().await.remove(&device_uuid);
     client_data_with_queue.write().await.remove(&device_uuid);
-
 }
 
 async fn check_last_exec_status(
@@ -417,7 +420,6 @@ async fn check_last_exec_status(
     device_uuid: &String,
     client_data_with_queue: ClientDataWithQueue,
 ) -> (bool, bool, Option<String>) {
-
     let mut flag = false;
     let mut status = false;
     let mut message: Option<String> = None;
@@ -504,7 +506,8 @@ async fn device_control(
             }
             drop(device_data);
             let (f, s, m) =
-                check_last_exec_status(&transaction, &device_uuid, client_data_with_queue.clone()).await;
+                check_last_exec_status(&transaction, &device_uuid, client_data_with_queue.clone())
+                    .await;
             let mut result = ExecResult {
                 status: 0,
                 message: None,
@@ -520,7 +523,6 @@ async fn device_control(
                 result.status = 0; // success
                 result.data = m;
             }
-
 
             // Construct the response
             if result.status == 0 {
@@ -550,10 +552,7 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
 
     // Invalidate token in DB by setting a past valid timestamp
     connection
-        .execute(
-            "DELETE FROM cookies WHERE token = ?1",
-            (&token,),
-        )
+        .execute("DELETE FROM cookies WHERE token = ?1", (&token,))
         .unwrap();
 
     Ok(warp::http::Response::builder()
@@ -563,28 +562,27 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
 }
 
 fn not_authenticated() -> impl Filter<Extract = (), Error = warp::Rejection> + Copy {
-    warp::header::<String>("cookie").and_then(|cookie: String| async move {
-        if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
-            match verify_auth(token) {
-                Ok(_) => {
-                    Err(warp::reject::custom(InvalidParameter {
+    warp::header::<String>("cookie")
+        .and_then(|cookie: String| async move {
+            if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
+                match verify_auth(token) {
+                    Ok(_) => Err(warp::reject::custom(InvalidParameter {
                         message: "Already authenticated.".to_string(),
-                    }))
-                },
-                Err(_) => {
-                    Ok(())
-                },
+                    })),
+                    Err(_) => Ok(()),
+                }
+            } else {
+                Ok(())
             }
-        } else {
-            Ok(())
-        }
-    }).untuple_one().or_else(|rej: warp::Rejection| async move {
-        if let Some(_) = rej.find::<InvalidParameter>() {
-            Err(rej)
-        } else {
-            Ok(())
-        }
-    })
+        })
+        .untuple_one()
+        .or_else(|rej: warp::Rejection| async move {
+            if let Some(_) = rej.find::<InvalidParameter>() {
+                Err(rej)
+            } else {
+                Ok(())
+            }
+        })
 }
 
 #[tokio::main]
@@ -592,7 +590,8 @@ async fn main() {
     let devices: Devices = std::sync::Arc::new(RwLock::new(HashMap::new()));
     let devices = warp::any().map(move || devices.clone());
 
-    let client_data_with_queue: ClientDataWithQueue = std::sync::Arc::new(RwLock::new(HashMap::new()));
+    let client_data_with_queue: ClientDataWithQueue =
+        std::sync::Arc::new(RwLock::new(HashMap::new()));
     let client_data_with_queue = warp::any().map(move || client_data_with_queue.clone());
 
     let login_route = warp::path("api")
@@ -624,23 +623,32 @@ async fn main() {
         .and(client_data_with_queue.clone())
         .and_then(device_control);
 
-    let ws_route =
-        warp::path("ws")
-            .and(warp::ws())
-            .and(devices)
-            .and(client_data_with_queue)
-            .map(move |ws: warp::ws::Ws, devices, cq| {
-                ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
-            });
+    let ws_route = warp::path("ws")
+        .and(warp::ws())
+        .and(devices)
+        .and(client_data_with_queue)
+        .map(move |ws: warp::ws::Ws, devices, cq| {
+            ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
+        });
 
-    let html_login_route = warp::get()
-        .and(warp::path("login.html"))
-        .and(not_authenticated().and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())))
-            .or(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/index.html")))));
+    let html_login_route = warp::get().and(warp::path("login.html")).and(
+        not_authenticated()
+            .and(warp::fs::file(format!(
+                "{}/login.html",
+                HTML_DIR_PATH.as_str()
+            )))
+            .or(warp::any()
+                .map(|| warp::redirect::temporary(warp::http::Uri::from_static("/index.html")))),
+    );
 
-    let html_dir_route = warp::get()
-        .and(not_authenticated().and(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html"))))
-            .or(warp::fs::dir(HTML_DIR_PATH.as_str())));
+    let html_dir_route = warp::get().and(
+        not_authenticated()
+            .and(
+                warp::any()
+                    .map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html"))),
+            )
+            .or(warp::fs::dir(HTML_DIR_PATH.as_str())),
+    );
 
     let routes = login_route
         .or(devices_route)
