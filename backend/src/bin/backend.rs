@@ -130,10 +130,6 @@ impl BoundedClientDataQueue {
         self.queue.push_back(data);
     }
 
-    fn get(&self, index: usize) -> Option<&ClientData> {
-        self.queue.get(index)
-    }
-
     fn remove(&mut self, index: usize) {
         self.queue.remove(index);
     }
@@ -168,6 +164,21 @@ fn get_utc_timestamp(time_stamp_str: &str) -> i64 {
     dt.timestamp()
 }
 
+fn remove_expired_tokens(user_id: i32, connection: &Connection) {
+    // Remove expired tokens
+    let past_time = get_utc_timestamp_str(
+        chrono::Utc::now()
+            .naive_utc()
+            .timestamp(),
+    );
+    connection
+        .execute(
+            "DELETE FROM cookies WHERE user_id = ?1 AND valid < ?2",
+            (&user_id, &past_time),
+        )
+        .unwrap();
+}
+
 async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
     let connection = get_db_connection();
 
@@ -196,10 +207,12 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
             // Store the token in the database with the expiration time
             connection
                 .execute(
-                    "UPDATE users SET token = ?1, valid = ?2 WHERE id = ?3",
+                    "INSERT INTO cookies (token, valid, user_id) VALUES (?1, ?2, ?3)",
                     (&token, &get_utc_timestamp_str(expiration as i64), &user_id),
                 )
                 .unwrap();
+
+            remove_expired_tokens(user_id, &connection);
 
             // Create a response with the token as a cookie
             let header_value = format!(
@@ -233,26 +246,22 @@ fn verify_auth(token: String) -> Result<i32, warp::Rejection> {
 
             // Validate token from DB
             let mut stmt = connection
-                .prepare("SELECT token, valid FROM users WHERE id = ?1")
+                .prepare("SELECT valid FROM cookies WHERE user_id = ?1 AND token = ?2")
                 .unwrap();
-            let db_data: Result<(String, String), _> =
-                stmt.query_row(&[&user_id], |row| Ok((row.get(0)?, row.get(1)?)));
+            let db_data: Result<String, _> =
+                stmt.query_row((&user_id, &token), |row| Ok(row.get(0)?));
 
-            if let Ok((db_token, valid_until)) = db_data {
-                return if &db_token == &token
-                    && chrono::Utc::now().timestamp() <= get_utc_timestamp(valid_until.as_str())
-                {
+            if let Ok(valid_until) = db_data {
+                return if chrono::Utc::now().timestamp() <= get_utc_timestamp(valid_until.as_str()) {
+                    remove_expired_tokens(user_id, &connection);
                     Ok(user_id)
-                } else if &db_token == &token {
+                } else {
                     Err(warp::reject::custom(InvalidParameter {
                         message: "Token expired".to_string(),
                     }))
-                } else {
-                    Err(warp::reject::custom(InvalidParameter {
-                        message: "Invalid token".to_string(),
-                    }))
                 };
             }
+
             Err(warp::reject::custom(InvalidParameter {
                 message: "Invalid token".to_string(),
             }))
@@ -540,15 +549,10 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
     let connection = get_db_connection();
 
     // Invalidate token in DB by setting a past valid timestamp
-    let past_time = get_utc_timestamp_str(
-        (chrono::Utc::now() - chrono::Duration::hours(2))
-            .naive_utc()
-            .timestamp(),
-    );
     connection
         .execute(
-            "UPDATE users SET valid = ?1 WHERE token = ?2",
-            (&past_time, &token),
+            "DELETE FROM cookies WHERE token = ?1",
+            (&token,),
         )
         .unwrap();
 
@@ -558,19 +562,29 @@ async fn logout(cookie: String) -> Result<impl warp::Reply, warp::Rejection> {
         .body("Logged out."))
 }
 
-fn authenticated() -> impl Filter<Extract = (), Error = warp::Rejection> + Copy {
+fn not_authenticated() -> impl Filter<Extract = (), Error = warp::Rejection> + Copy {
     warp::header::<String>("cookie").and_then(|cookie: String| async move {
         if let Some(token) = extract_token_from_cookie(cookie.as_str()) {
             match verify_auth(token) {
-                Ok(_) => Ok(()),
-                Err(rej) => Err(rej),
+                Ok(_) => {
+                    Err(warp::reject::custom(InvalidParameter {
+                        message: "Already authenticated.".to_string(),
+                    }))
+                },
+                Err(_) => {
+                    Ok(())
+                },
             }
         } else {
-            Err(warp::reject::custom(InvalidParameter {
-                message: "Invalid token.".to_string(),
-            }))
+            Ok(())
         }
-    }).untuple_one()
+    }).untuple_one().or_else(|rej: warp::Rejection| async move {
+        if let Some(_) = rej.find::<InvalidParameter>() {
+            Err(rej)
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[tokio::main]
@@ -619,25 +633,21 @@ async fn main() {
                 ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
             });
 
-    let html_login_route1 = warp::path("login.html")
-        .and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())));
-
-    let html_login_route2 = warp::path("login")
-        .and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())));
+    let html_login_route = warp::get()
+        .and(warp::path("login.html"))
+        .and(not_authenticated().and(warp::fs::file(format!("{}/login.html", HTML_DIR_PATH.as_str())))
+            .or(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/index.html")))));
 
     let html_dir_route = warp::get()
-        .and(authenticated())
-        .and(warp::fs::dir(HTML_DIR_PATH.as_str()))
-        // or redirect to login page
-        .or(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html"))));
+        .and(not_authenticated().and(warp::any().map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html"))))
+            .or(warp::fs::dir(HTML_DIR_PATH.as_str())));
 
     let routes = login_route
         .or(devices_route)
         .or(logout_route)
         .or(device_control_route)
         .or(ws_route)
-        .or(html_login_route1)
-        .or(html_login_route2)
+        .or(html_login_route)
         .or(html_dir_route);
 
     warp::serve(routes).run(SERVE_ADDR.clone()).await;

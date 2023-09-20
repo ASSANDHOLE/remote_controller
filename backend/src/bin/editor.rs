@@ -51,7 +51,7 @@ fn main() {
 fn create_database(db_path: &str) {
     let connection = Connection::open(db_path).unwrap();
 
-    let create_users = connection.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL, token TEXT, valid TIMESTAMP)", ());
+    let create_users = connection.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL)", ());
     if create_users.is_err() {
         println!(
             "Failed to create users table: {}",
@@ -68,6 +68,16 @@ fn create_database(db_path: &str) {
         );
         return;
     }
+
+    let create_cookies = connection.execute("CREATE TABLE IF NOT EXISTS cookies (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT NOT NULL, valid TIMESTAMP NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))", ());
+    if create_cookies.is_err() {
+        println!(
+            "Failed to create cookies table: {}",
+            create_cookies.err().unwrap()
+        );
+        return;
+    }
+
     println!("Databases created!");
 }
 
@@ -121,10 +131,20 @@ fn delete_user(db_path: &str) {
     let res = connection
         .execute("DELETE FROM devices WHERE user_id = ?1", &[&uid.trim()])
         .unwrap();
-    if res == 1 {
+    if res > 0 {
         println!("Devices deleted!");
     } else {
         println!("Failed to delete devices!");
+    }
+
+    // Delete any cookies associated with the user
+    let res = connection
+        .execute("DELETE FROM cookies WHERE user_id = ?1", &[&uid.trim()])
+        .unwrap();
+    if res > 0 {
+        println!("Cookies deleted!");
+    } else {
+        println!("Failed to delete cookies!");
     }
 
     let res = connection

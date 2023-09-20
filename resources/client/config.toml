@@ -2,4 +2,12 @@
 uuid = "7dc42dff-8f38-4de1-8517-007c9c94e716"  # example
 
 [server]
-path = "ws://127.0.0.1:3030/ws"
+path = "ws://127.0.0.1:3030/ws"  # or wss:// if you have a certificate
+
+[control]
+# 0 or 1, if 1, use media_control_app_path <ctrl> to control media
+# i.e. action = `audio vol_up` will actually be `exec media_control_app_path vol_up`
+# If 0, the media control will be done by simulating keypresses
+use_media_control_app = "1"
+# Required only if use_media_control_app is set to 1
+media_control_app_path = "/path/to/controller.executable"

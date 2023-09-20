@@ -12,12 +12,12 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use url::Url;
 use which::which;
 
-const CONFIG_PATH: &str = "config.toml";
-
 #[derive(Clone, Deserialize)]
 struct Config {
     device_uuid: String,
     server_path: String,
+    use_media_control_app: bool,
+    media_control_app_path: Option<String>,
 }
 
 async fn connect_and_handle_messages(config: Config) {
@@ -32,7 +32,7 @@ async fn connect_and_handle_messages(config: Config) {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
     // Send the device UUID to the server
-    let uuid_message = Message::text(config.device_uuid);
+    let uuid_message = Message::text(&config.device_uuid.clone());
     ws_tx.send(uuid_message).await.unwrap();
 
     // Handle incoming messages
@@ -40,7 +40,7 @@ async fn connect_and_handle_messages(config: Config) {
         match result {
             Ok(msg) => {
                 // Process the incoming message and generate a response
-                let response = process_message(msg).await;
+                let response = process_message(msg, &config).await;
 
                 // Send the response back to the server
                 if let Some(response) = response {
@@ -57,7 +57,15 @@ async fn connect_and_handle_messages(config: Config) {
     }
 }
 
-fn processing_audio_setting(action: &String) -> bool {
+fn processing_audio_setting(action: &String, config: &Config) -> bool {
+    if config.use_media_control_app {
+        if let Some(media_control_app_path) = &config.media_control_app_path {
+            let output = exec_get_output(&format!("exec {} {}", media_control_app_path, action));
+            if let Some((suc, _)) = output {
+                return suc;
+            }
+        }
+    }
     match action.as_str() {
         "vol_up" => {
             simulate(&EventType::KeyPress(Key::Unknown(175))).unwrap();
@@ -68,18 +76,18 @@ fn processing_audio_setting(action: &String) -> bool {
             simulate(&EventType::KeyRelease(Key::Unknown(174))).unwrap();
         }
         "vol_mute" => {
-            simulate(&EventType::KeyPress(Key::Unknown(181))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(181))).unwrap();
+            simulate(&EventType::KeyPress(Key::Unknown(173))).unwrap();
+            simulate(&EventType::KeyRelease(Key::Unknown(173))).unwrap();
         }
-        "pulse" => {
+        "pause" => {
             simulate(&EventType::KeyPress(Key::Unknown(179))).unwrap();
             simulate(&EventType::KeyRelease(Key::Unknown(179))).unwrap();
         }
-        "next_track" => {
+        "next" => {
             simulate(&EventType::KeyPress(Key::Unknown(176))).unwrap();
             simulate(&EventType::KeyRelease(Key::Unknown(176))).unwrap();
         }
-        "prev_track" => {
+        "prev" => {
             simulate(&EventType::KeyPress(Key::Unknown(177))).unwrap();
             simulate(&EventType::KeyRelease(Key::Unknown(177))).unwrap();
         }
@@ -96,6 +104,10 @@ fn exec_get_output(command: &String) -> Option<(bool, String)> {
 
     // Remove `exec` from the args
     args.remove(0);
+
+    if args.is_empty() {
+        return None;
+    }
 
     let cmd = if cfg!(windows) && !command.contains("\\") && !command.contains("/") {
         // For Windows, if the command doesn't have a path, search using PATHEXT
@@ -150,7 +162,7 @@ fn exec_get_output(command: &String) -> Option<(bool, String)> {
     None
 }
 
-async fn process_message(msg: Message) -> Option<String> {
+async fn process_message(msg: Message, config: &Config) -> Option<String> {
     /// Process the incoming message and generate a response
     ///
     /// # Arguments
@@ -164,7 +176,7 @@ async fn process_message(msg: Message) -> Option<String> {
     /// # Message format:
     ///
     /// { transaction: str, action: str }
-    /// action: [audio [vol_up, vol_down, vol_mute, pulse, next_track, prev_track] | exec [...]]
+    /// action: [audio [vol_up, vol_down, vol_mute, pause, next, prev] | exec [...]]
     ///
     /// # Response format:
     ///
@@ -175,23 +187,32 @@ async fn process_message(msg: Message) -> Option<String> {
     ///   { transaction: str, status: false, message: { cause: str } }
     ///
 
-    let msg_str = msg.to_text().unwrap();
+    let msg_str = msg.to_text().unwrap_or("");
+    if msg_str.is_empty() {
+        return None;
+    }
     // { transaction: str, action: str }
     // action: [audio [vol_up, vol_down, vol_mute, pulse, next_track, prev_track] | exec [...]]
-    let json: Value = serde_json::from_str(msg_str).unwrap();
+    let json = serde_json::from_str(msg_str).unwrap_or(Value::Null);
+    if json.is_null() {
+        return None;
+    }
     return if let Some(transaction) = json.get("transaction") {
         if let Some(action) = json.get("action") {
             // Get Operator by splitting the action string of the first space
-            let action_str = action.as_str().unwrap().trim();
+            let action_str = action.as_str().unwrap_or("").trim();
+            if action_str.is_empty() {
+                return Some(serde_json::json!({"transaction": transaction, "status": false, "message": {"cause": "Action Not Found."}}).to_string());
+            }
             let operator = action_str.split_whitespace().next().unwrap();
             match operator {
                 "audio" => {
-                    let action = action_str.split_whitespace().nth(1).unwrap();
-                    if processing_audio_setting(&action.to_string()) {
-                        Some(serde_json::json!({"transaction": transaction, "status": true}).to_string())
-                    } else {
-                        Some(serde_json::json!({"transaction": transaction, "status": false}).to_string())
+                    if let Some(action) = action_str.split_whitespace().nth(1) {
+                        if processing_audio_setting(&action.to_string(), &config) {
+                            return Some(serde_json::json!({"transaction": transaction, "status": true}).to_string())
+                        }
                     }
+                    Some(serde_json::json!({"transaction": transaction, "status": false}).to_string())
                 }
                 "exec" => {
                     let output = exec_get_output(&action_str.to_string());
@@ -215,7 +236,7 @@ async fn process_message(msg: Message) -> Option<String> {
 
 #[tokio::main]
 async fn main() {
-    let exe_path = std::env::current_exe().expect("Failed to get executable path");
+    let exe_path = env::current_exe().expect("Failed to get executable path");
     let exe_dir = exe_path
         .parent()
         .expect("Failed to get directory of executable");
@@ -236,11 +257,24 @@ async fn main() {
             .get("path")
             .expect("Failed to get server path")
             .to_string(),
+        use_media_control_app: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("use_media_control_app")
+            .expect("Failed to get use_media_control_app")
+            .parse::<i32>()
+            .expect("Failed to parse use_media_control_app")
+            != 0,
+        media_control_app_path: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("media_control_app_path")
+            .map(|s| s.to_string()),
     };
 
     loop {
         connect_and_handle_messages(config.clone()).await;
         eprintln!("Connection lost. Attempting to reconnect...");
-        sleep(Duration::from_secs(5)).await; // Wait 5 seconds before attempting to reconnect
+        sleep(Duration::from_millis(100)).await; // Wait 0.1 seconds before attempting to reconnect
     }
 }
