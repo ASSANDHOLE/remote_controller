@@ -25,7 +25,7 @@ async fn connect_and_handle_messages(config: Config) {
     let url = Url::parse(&config.server_path).expect("Failed to parse server path");
     let conn = connect_async(url).await;
     if conn.is_err() {
-        eprintln!("Failed to connect to server.");
+        eprintln!("[{}]::Failed to connect to server.", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
         return;
     }
     let (ws_stream, _) = conn.unwrap();
@@ -57,7 +57,12 @@ async fn connect_and_handle_messages(config: Config) {
     }
 }
 
-fn processing_audio_setting(action: &String, config: &Config) -> bool {
+fn press_key_get_result(code: u32) -> bool {
+    simulate(&EventType::KeyPress(Key::Unknown(code))).is_ok()
+        && simulate(&EventType::KeyRelease(Key::Unknown(code))).is_ok()
+}
+
+fn processing_audio_setting(action: &String, config: &Config) -> i32 {
     if config.use_media_control_app {
         if let Some(media_control_app_path) = &config.media_control_app_path {
             let output = exec_get_output(&format!("exec {} {}", media_control_app_path, action));
@@ -66,39 +71,37 @@ fn processing_audio_setting(action: &String, config: &Config) -> bool {
             }
         }
     }
-    match action.as_str() {
+
+    return if match action.as_str() {
         "vol_up" => {
-            simulate(&EventType::KeyPress(Key::Unknown(175))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(175))).unwrap();
+            press_key_get_result(175)
         }
         "vol_down" => {
-            simulate(&EventType::KeyPress(Key::Unknown(174))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(174))).unwrap();
+            press_key_get_result(174)
         }
         "vol_mute" => {
-            simulate(&EventType::KeyPress(Key::Unknown(173))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(173))).unwrap();
+            press_key_get_result(173)
         }
         "pause" => {
-            simulate(&EventType::KeyPress(Key::Unknown(179))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(179))).unwrap();
+            press_key_get_result(179)
         }
         "next" => {
-            simulate(&EventType::KeyPress(Key::Unknown(176))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(176))).unwrap();
+            press_key_get_result(176)
         }
         "prev" => {
-            simulate(&EventType::KeyPress(Key::Unknown(177))).unwrap();
-            simulate(&EventType::KeyRelease(Key::Unknown(177))).unwrap();
+            press_key_get_result(177)
         }
         _ => {
-            return false;
+            false
         }
-    }
-    true
+    } {
+        1
+    } else {
+        0
+    };
 }
 
-fn exec_get_output(command: &String) -> Option<(bool, String)> {
+fn exec_get_output(command: &String) -> Option<(i32, String)> {
     let mut args: Vec<&str> = command.split_whitespace().collect();
 
     // Remove `exec` from the args
@@ -149,9 +152,9 @@ fn exec_get_output(command: &String) -> Option<(bool, String)> {
 
     if let Ok(output) = output {
         return if output.status.success() {
-            Some((true, String::from_utf8_lossy(&output.stdout).to_string()))
+            Some((output.status.code().unwrap_or(0), String::from_utf8_lossy(&output.stdout).to_string()))
         } else {
-            Some((false, String::from_utf8_lossy(&output.stderr).to_string()))
+            Some((output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).to_string()))
         };
     }
 
@@ -203,8 +206,11 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
             match operator {
                 "audio" => {
                     if let Some(action) = action_str.split_whitespace().nth(1) {
-                        if processing_audio_setting(&action.to_string(), &config) {
-                            return Some(serde_json::json!({"transaction": transaction, "status": true}).to_string())
+                        let processing_res = processing_audio_setting(&action.to_string(), &config);
+                        return if processing_res == 0 {
+                            Some(serde_json::json!({"transaction": transaction, "status": true}).to_string())
+                        } else {
+                            Some(serde_json::json!({"transaction": transaction, "status": true, "message": {"exit": processing_res}}).to_string())
                         }
                     }
                     Some(serde_json::json!({"transaction": transaction, "status": false}).to_string())
@@ -269,7 +275,7 @@ async fn main() {
 
     loop {
         connect_and_handle_messages(config.clone()).await;
-        eprintln!("Connection lost. Attempting to reconnect...");
+        eprintln!("[{}]::Connection lost. Attempting to reconnect...", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
         sleep(Duration::from_millis(100)).await; // Wait 0.1 seconds before attempting to reconnect
     }
 }

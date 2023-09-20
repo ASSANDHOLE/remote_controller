@@ -530,6 +530,14 @@ async fn device_control(
                     .status(warp::http::StatusCode::OK)
                     .body(result.data.unwrap_or("".to_string())))
             } else {
+                if let None = &result.message {
+                    result.message =
+                        match result.status {
+                            1 => Some("Failed to execute command.".to_string()),
+                            2 => Some("Timeout.".to_string()),
+                            _ => None,
+                        }
+                }
                 Ok(warp::http::Response::builder()
                     .status(warp::http::StatusCode::SERVICE_UNAVAILABLE)
                     .body(result.message.unwrap_or("".to_string())))
@@ -631,6 +639,18 @@ async fn main() {
             ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
         });
 
+    let ico_route = warp::path("favicon.ico")
+        .and(warp::fs::file(format!(
+            "{}/favicon.ico",
+            HTML_DIR_PATH.as_str()
+        )));
+
+    let resources_route = warp::path("resources")
+        .and(warp::fs::dir(format!(
+            "{}/resources",
+            HTML_DIR_PATH.as_str()
+        )));
+
     let html_login_route = warp::get().and(warp::path("login.html")).and(
         not_authenticated()
             .and(warp::fs::file(format!(
@@ -655,6 +675,8 @@ async fn main() {
         .or(logout_route)
         .or(device_control_route)
         .or(ws_route)
+        .or(ico_route)
+        .or(resources_route)
         .or(html_login_route)
         .or(html_dir_route);
 
