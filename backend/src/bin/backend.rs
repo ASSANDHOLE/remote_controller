@@ -194,8 +194,7 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
             }
         }
         // Generate JWT
-        let expiration =
-            (chrono::Utc::now() + COOKIE_VALID_DURATION.clone()).timestamp() as usize;
+        let expiration = (chrono::Utc::now() + COOKIE_VALID_DURATION.clone()).timestamp() as usize;
         let claims = Claims {
             sub: user_id.to_string(),
             exp: expiration,
@@ -537,12 +536,11 @@ async fn device_control(
                     .body(result.data.unwrap_or("".to_string())))
             } else {
                 if let None = &result.message {
-                    result.message =
-                        match result.status {
-                            1 => Some("Failed to execute command.".to_string()),
-                            2 => Some("Timeout.".to_string()),
-                            _ => None,
-                        }
+                    result.message = match result.status {
+                        1 => Some("Failed to execute command.".to_string()),
+                        2 => Some("Timeout.".to_string()),
+                        _ => None,
+                    }
                 }
                 Ok(warp::http::Response::builder()
                     .status(warp::http::StatusCode::SERVICE_UNAVAILABLE)
@@ -645,17 +643,15 @@ async fn main() {
             ws.on_upgrade(move |socket| handle_connection(socket, devices, cq))
         });
 
-    let ico_route = warp::path("favicon.ico")
-        .and(warp::fs::file(format!(
-            "{}/favicon.ico",
-            HTML_DIR_PATH.as_str()
-        )));
+    let ico_route = warp::path("favicon.ico").and(warp::fs::file(format!(
+        "{}/favicon.ico",
+        HTML_DIR_PATH.as_str()
+    )));
 
-    let resources_route = warp::path("resources")
-        .and(warp::fs::dir(format!(
-            "{}/resources",
-            HTML_DIR_PATH.as_str()
-        )));
+    let resources_route = warp::path("resources").and(warp::fs::dir(format!(
+        "{}/resources",
+        HTML_DIR_PATH.as_str()
+    )));
 
     let html_login_route = warp::get().and(warp::path("login.html")).and(
         not_authenticated()

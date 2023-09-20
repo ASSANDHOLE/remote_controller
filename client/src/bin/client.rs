@@ -18,6 +18,7 @@ struct Config {
     server_path: String,
     use_media_control_app: bool,
     media_control_app_path: Option<String>,
+    media_control_app_shell_prefix: String,
 }
 
 async fn connect_and_handle_messages(config: Config) {
@@ -25,7 +26,10 @@ async fn connect_and_handle_messages(config: Config) {
     let url = Url::parse(&config.server_path).expect("Failed to parse server path");
     let conn = connect_async(url).await;
     if conn.is_err() {
-        eprintln!("[{}]::Failed to connect to server.", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+        eprintln!(
+            "[{}]::Failed to connect to server.",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
         return;
     }
     let (ws_stream, _) = conn.unwrap();
@@ -65,7 +69,10 @@ fn press_key_get_result(code: u32) -> bool {
 fn processing_audio_setting(action: &String, config: &Config) -> i32 {
     if config.use_media_control_app {
         if let Some(media_control_app_path) = &config.media_control_app_path {
-            let output = exec_get_output(&format!("exec {} {}", media_control_app_path, action));
+            let output = exec_get_output(&format!(
+                "exec {} {} {}",
+                config.media_control_app_shell_prefix, media_control_app_path, action
+            ));
             if let Some((suc, _)) = output {
                 return suc;
             }
@@ -73,27 +80,13 @@ fn processing_audio_setting(action: &String, config: &Config) -> i32 {
     }
 
     return if match action.as_str() {
-        "vol_up" => {
-            press_key_get_result(175)
-        }
-        "vol_down" => {
-            press_key_get_result(174)
-        }
-        "vol_mute" => {
-            press_key_get_result(173)
-        }
-        "pause" => {
-            press_key_get_result(179)
-        }
-        "next" => {
-            press_key_get_result(176)
-        }
-        "prev" => {
-            press_key_get_result(177)
-        }
-        _ => {
-            false
-        }
+        "vol_up" => press_key_get_result(175),
+        "vol_down" => press_key_get_result(174),
+        "vol_mute" => press_key_get_result(173),
+        "pause" => press_key_get_result(179),
+        "next" => press_key_get_result(176),
+        "prev" => press_key_get_result(177),
+        _ => false,
     } {
         1
     } else {
@@ -152,9 +145,15 @@ fn exec_get_output(command: &String) -> Option<(i32, String)> {
 
     if let Ok(output) = output {
         return if output.status.success() {
-            Some((output.status.code().unwrap_or(0), String::from_utf8_lossy(&output.stdout).to_string()))
+            Some((
+                output.status.code().unwrap_or(0),
+                String::from_utf8_lossy(&output.stdout).to_string(),
+            ))
         } else {
-            Some((output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).to_string()))
+            Some((
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
         };
     }
 
@@ -271,11 +270,20 @@ async fn main() {
             .expect("Failed to get control")
             .get("media_control_app_path")
             .map(|s| s.to_string()),
+        media_control_app_shell_prefix: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("media_control_app_shell_prefix")
+            .map(|s| s.to_string())
+            .unwrap_or("".to_string()),
     };
 
     loop {
         connect_and_handle_messages(config.clone()).await;
-        eprintln!("[{}]::Connection lost. Attempting to reconnect...", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+        eprintln!(
+            "[{}]::Connection lost. Attempting to reconnect...",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
         sleep(Duration::from_millis(100)).await; // Wait 0.1 seconds before attempting to reconnect
     }
 }

@@ -9,5 +9,12 @@ path = "ws://127.0.0.1:3030/ws"  # or wss:// if you have a certificate
 # i.e. action = `audio vol_up` will actually be `exec media_control_app_path vol_up`
 # If 0, the media control will be done by simulating keypresses
 use_media_control_app = "1"
-# Required only if use_media_control_app is set to 1
+# Required <only> if use_media_control_app is set to 1
 media_control_app_path = "/path/to/controller.executable"
+# directly execute the media_control_app might not work
+# E.g. When the screen saver is on
+# In this case, you can use a shell to execute the media_control_app
+# Required <only> if use_media_control_app is set to 1
+# The actual command will be media_control_app_shell_prefix media_control_app_path
+# E.g. pwsh -c /path/to/controller.executable <action>
+media_control_app_shell_prefix = "pwsh -c"
