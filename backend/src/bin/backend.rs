@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::result;
 
 use chrono::{DateTime, NaiveDateTime};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
@@ -185,37 +186,42 @@ async fn login(user: UserInput) -> Result<impl warp::Reply, warp::Rejection> {
         stmt.query_row(&[&user.username], |row| Ok((row.get(0)?, row.get(1)?)));
 
     if let Ok((user_id, stored_password)) = user_data {
-        if bcrypt::verify(&user.password.trim(), &stored_password).is_ok() {
-            // Generate JWT
-            let expiration =
-                (chrono::Utc::now() + COOKIE_VALID_DURATION.clone()).timestamp() as usize;
-            let claims = Claims {
-                sub: user_id.to_string(),
-                exp: expiration,
-            };
-            let token = encode(&Header::default(), &claims, &ENC_KEY).unwrap();
-
-            // Store the token in the database with the expiration time
-            connection
-                .execute(
-                    "INSERT INTO cookies (token, valid, user_id) VALUES (?1, ?2, ?3)",
-                    (&token, &get_utc_timestamp_str(expiration as i64), &user_id),
-                )
-                .unwrap();
-
-            remove_expired_tokens(user_id, &connection);
-
-            // Create a response with the token as a cookie
-            let header_value = format!(
-                "token={}; HttpOnly; Path=/; Max-Age={}",
-                token,
-                COOKIE_VALID_DURATION.num_seconds()
-            );
-            return Ok(warp::http::Response::builder()
-                .status(warp::http::StatusCode::OK)
-                .header("set-cookie", header_value)
-                .body("User authenticated."));
+        if let Ok(result) = bcrypt::verify(&user.password.trim(), &stored_password) {
+            if !result {
+                return Ok(warp::http::Response::builder()
+                    .status(warp::http::StatusCode::FORBIDDEN)
+                    .body("Invalid credentials."));
+            }
         }
+        // Generate JWT
+        let expiration =
+            (chrono::Utc::now() + COOKIE_VALID_DURATION.clone()).timestamp() as usize;
+        let claims = Claims {
+            sub: user_id.to_string(),
+            exp: expiration,
+        };
+        let token = encode(&Header::default(), &claims, &ENC_KEY).unwrap();
+
+        // Store the token in the database with the expiration time
+        connection
+            .execute(
+                "INSERT INTO cookies (token, valid, user_id) VALUES (?1, ?2, ?3)",
+                (&token, &get_utc_timestamp_str(expiration as i64), &user_id),
+            )
+            .unwrap();
+
+        remove_expired_tokens(user_id, &connection);
+
+        // Create a response with the token as a cookie
+        let header_value = format!(
+            "token={}; HttpOnly; Path=/; Max-Age={}",
+            token,
+            COOKIE_VALID_DURATION.num_seconds()
+        );
+        return Ok(warp::http::Response::builder()
+            .status(warp::http::StatusCode::OK)
+            .header("set-cookie", header_value)
+            .body("User authenticated."));
     }
 
     // Construct the error response
