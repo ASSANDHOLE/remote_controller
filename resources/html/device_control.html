@@ -237,7 +237,7 @@
         if (typeof response === "string") {
             responseArea.style.color = "red";
             content = response || '<empty_response>';
-        } else if (response.execution !== 0 && response.success) {
+        } else if (response.execution === 0 && response.success) {
             responseArea.style.color = "black";
             content = ansiToHtml(response.output) || '<empty_response>';  // Use the conversion function here
             responseArea.innerHTML = content;
