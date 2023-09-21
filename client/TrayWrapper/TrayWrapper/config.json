@@ -1,8 +1,10 @@
 {
   "appPath": "/full/path/to/target/background/app",
+  "appArgs": "app args (Optional, delete this line to not set)",
+  "appWorkingDir": "/full/path/to/working/directory/of/app (Optional, detele to not set)",
   "outLogPath": "/full/path/to/std_out/log/file/of/app",
   "errorLogPath": "/full/path/to/std_err/log/file/of/app",
   "maxLogSize": 20971520,
-  "appName": "app_name (optioanl, detele this line to use defualt (TrayWrapper); If using autostart within the app, make sure the name is unique)",
-  "appIcon": "/full/path/to/app/icon (optional, delete this line to use defualt)"
+  "appName": "app_name (Optioanl, detele this line to use defualt (TrayWrapper); If using autostart within the app, make sure the name is unique)",
+  "appIcon": "/full/path/to/app/icon (Optional, delete this line to use defualt)"
 }

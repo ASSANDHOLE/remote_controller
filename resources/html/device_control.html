@@ -50,6 +50,27 @@
             border: 1px solid #ccc;
             white-space: pre-wrap;  /* Preserves whitespace and newlines */
         }
+
+        #loadingSpinner {
+            display: none;
+            border: 8px solid #f5f5f5;
+            border-top: 8px solid #007BFF;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #shellPrefixContainer {
+            display: none;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -66,8 +87,15 @@
 </div>
 
 <h3>Execute Command (Will search in PATH)</h3>
+<label>
+    <input type="checkbox" id="shellPrefixCheckbox" onclick="toggleShellPrefixInput()"> Use custom shell prefix
+</label>
+<div id="shellPrefixContainer">
+    <input type="text" id="shellPrefixInput" placeholder="Shell Prefix (e.g., bash -c)" autocapitalize="off" autocorrect="off">
+</div>
 <input type="text" id="customActionInput" placeholder="Enter Command" autocapitalize="off" autocorrect="off">
 <button onclick="submitCustomAction()">Submit Command</button>
+<div id="loadingSpinner"></div>
 
 <h3>Response</h3>
 <button onclick="copyOutput()">Copy Output</button>
@@ -87,44 +115,80 @@
 
     async function submitCustomAction() {
         const customActionInput = document.getElementById('customActionInput');
+        const shellPrefixInput = document.getElementById('shellPrefixInput');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+
         let action = customActionInput.value;
-        if (action !== "") {
-            action = "exec " + action;
+        if (action === "") {
+            return;
         }
+
+        const shellPrefix = shellPrefixInput.value;
+        if (shellPrefix) {
+            action = shellPrefix + " " + action;
+        }
+        action = "exec " + action;
+
+        loadingSpinner.style.display = 'block'; // Show loading spinner
+
         const result = await sendActionRequest(action);
         if (result) {
             customActionInput.value = "";
         }
+
+        loadingSpinner.style.display = 'none'; // Hide loading spinner
     }
 
     async function sendActionRequest(action, noResponse = false) {
-        const response = await fetch(`/api/device?device_uuid=${deviceUuid}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                action: action
-            })
+        const TIMEOUT = 5000;  // 5 seconds in milliseconds
+
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("Request timed out after 5 seconds")), TIMEOUT);
         });
 
-        if (noResponse) {
-            return;
-        }
+        try {
+            const response = await Promise.race([
+                fetch(`/api/device?device_uuid=${deviceUuid}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        action: action
+                    })
+                }),
+                timeoutPromise
+            ]);
 
-        if (response.ok) {
-            let responseBody;
-            try {
-                responseBody = await response.json();
-            } catch {
-                responseBody = await response.text();
+            if (noResponse) {
+                if (!response.ok) {
+                    console.error(`Error: ${response.status} ${response.statusText}`);
+                }
+                return;
             }
-            return displayResponse(responseBody);
-        } else {
-            alert(`Error: ${response.status} ${response.statusText}`);
+
+            if (response.ok) {
+                let responseBody;
+                try {
+                    responseBody = await response.json();
+                } catch {
+                    responseBody = await response.text();
+                }
+                return displayResponse(responseBody);
+            } else {
+                alert(`Error: ${response.status} ${response.statusText}`);
+                return false;
+            }
+        } catch (error) {
+            if (!noResponse) {
+                alert(error.message);
+            } else {
+                console.error(error.message);
+            }
             return false;
         }
     }
+
 
     function ansiToHtml(ansiString) {
         const foregroundColors = {
@@ -252,6 +316,16 @@
 
         responseArea.innerHTML = content;  // Use innerHTML instead of value to render HTML tags
         return false;
+    }
+
+    function toggleShellPrefixInput() {
+        const shellPrefixCheckbox = document.getElementById('shellPrefixCheckbox');
+        const shellPrefixContainer = document.getElementById('shellPrefixContainer');
+        if (shellPrefixCheckbox.checked) {
+            shellPrefixContainer.style.display = 'block';
+        } else {
+            shellPrefixContainer.style.display = 'none';
+        }
     }
 
 

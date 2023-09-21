@@ -20,6 +20,9 @@ namespace TrayWrapper
 
         private NotifyIcon notifyIcon;
         private string appPath;
+        private string appArgs = "";
+        private string appWorkingDir = "";
+
         private string outLogPath;
         private string errorLogPath;
         private long maxLogSize;
@@ -57,6 +60,14 @@ namespace TrayWrapper
             var config = JObject.Parse(File.ReadAllText(configPath));
 
             appPath = (string)config["appPath"];
+            if (config["appArgs"] != null)
+            {
+                appArgs = (string)config["appArgs"];
+            }
+            if (config["appWorkingDir"] != null)
+            {
+                appWorkingDir = (string)config["appWorkingDir"];
+            }
             outLogPath = (string)config["outLogPath"];
             errorLogPath = (string)config["errorLogPath"];
             maxLogSize = (long)config["maxLogSize"];
@@ -88,7 +99,14 @@ namespace TrayWrapper
                 Visible = true,
                 Text = appName
             };
+            var restartAppProcessMenuItem = new MenuItem("Restart", (sender, e) => { stopAppProcess(); StartApp(); });
+            notifyIcon.ContextMenu.MenuItems.Add(restartAppProcessMenuItem);
             notifyIcon.ContextMenu.MenuItems.Add(autoStartMenuItem);
+        }
+
+        private void OnAppProcessExit(object sender, EventArgs e)
+        {
+            RestartApp();
         }
 
         private void StartApp()
@@ -97,12 +115,14 @@ namespace TrayWrapper
             appProcess.StartInfo.CreateNoWindow = true;
             appProcess.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
             appProcess.StartInfo.FileName = appPath;
+            appProcess.StartInfo.Arguments = appArgs;
+            appProcess.StartInfo.WorkingDirectory = appWorkingDir;
             appProcess.StartInfo.RedirectStandardOutput = true;
             appProcess.StartInfo.RedirectStandardError = true;
             appProcess.StartInfo.UseShellExecute = false;
             appProcess.OutputDataReceived += (sender, e) => LogToFile(e.Data, outLogPath);
             appProcess.ErrorDataReceived += (sender, e) => LogToFile(e.Data, errorLogPath);
-            appProcess.Exited += (sender, e) => RestartApp();
+            appProcess.Exited += OnAppProcessExit;
             appProcess.Start();
             appProcess.BeginOutputReadLine();
             appProcess.BeginErrorReadLine();
@@ -134,14 +154,14 @@ namespace TrayWrapper
 
         }
 
-        void Exit(object sender, EventArgs e)
+        void stopAppProcess()
         {
-            notifyIcon.Visible = false;
-
             // Attempt a graceful shutdown
             if (appProcess != null && !appProcess.HasExited)
             {
-                appProcess.CloseMainWindow();
+                appProcess.Exited -= OnAppProcessExit;
+                
+                appProcess.Close();
 
                 if (!appProcess.WaitForExit(1000))  // ms
                 {
@@ -151,6 +171,13 @@ namespace TrayWrapper
 
                 appProcess.Dispose();
             }
+        }
+
+        void Exit(object sender, EventArgs e)
+        {
+            notifyIcon.Visible = false;
+
+            stopAppProcess();
 
             Application.Exit();
         }
