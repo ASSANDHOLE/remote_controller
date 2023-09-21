@@ -39,15 +39,9 @@ namespace TrayWrapper
             }
             catch (Exception ex)
             {
-                DebugLog(ex.ToString());
                 MessageBox.Show(ex.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Exit(null, null);
             }
-        }
-
-        private void DebugLog(string message)
-        {
-            File.AppendAllText("TrayWrapper_error.log", DateTime.Now + ": " + message + Environment.NewLine);
         }
 
 
@@ -160,16 +154,17 @@ namespace TrayWrapper
             if (appProcess != null && !appProcess.HasExited)
             {
                 appProcess.Exited -= OnAppProcessExit;
-                
+
                 appProcess.Close();
 
-                if (!appProcess.WaitForExit(1000))  // ms
+                try
                 {
-                    // If the process is still running after the timeout, forcefully terminate it
-                    appProcess.Kill();
-                }
-
-                appProcess.Dispose();
+                    if (!appProcess.HasExited && !appProcess.WaitForExit(1000))  // ms
+                    {
+                        // If the process is still running after the timeout, forcefully terminate it
+                        appProcess.Kill();
+                    }
+                } catch (InvalidOperationException) { }
             }
         }
 
@@ -210,7 +205,6 @@ namespace TrayWrapper
                     // If a value with the same appName exists but the path is different
                     var errorMessage = $"Warning: Another application is already using the name '{appName}' in the autostart registry. Autostart was not enabled for TrayWrapper.";
                     MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    DebugLog(errorMessage);
                 }
             }
         }
@@ -231,7 +225,6 @@ namespace TrayWrapper
                     // If a value with the same appName exists but the path is different
                     var errorMessage = $"Warning: Another application is already using the name '{appName}' in the autostart registry. Autostart was not disabled for TrayWrapper.";
                     MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    DebugLog(errorMessage);
                 }
             }
         }

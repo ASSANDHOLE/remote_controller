@@ -119,12 +119,13 @@
         const loadingSpinner = document.getElementById('loadingSpinner');
 
         let action = customActionInput.value;
+        const checkBoxState = document.getElementById('shellPrefixCheckbox').checked;
         if (action === "") {
             return;
         }
 
         const shellPrefix = shellPrefixInput.value;
-        if (shellPrefix) {
+        if (shellPrefix && checkBoxState) {
             action = shellPrefix + " " + action;
         }
         action = "exec " + action;
@@ -301,16 +302,16 @@
         if (typeof response === "string") {
             responseArea.style.color = "red";
             content = response || '<empty_response>';
-        } else if (response.execution === 0 && response.success) {
-            responseArea.style.color = "black";
+        } else if (response.success) {
+            responseArea.style.color = response.execution === 0 ? "black" : "orange";
             content = ansiToHtml(response.output) || '<empty_response>';  // Use the conversion function here
             responseArea.innerHTML = content;
             return true;
-        } else if (response.success) {
-            responseArea.style.color = "orange";
-            content = response.output || '<empty_response>';
         } else {
             responseArea.style.color = "red";
+            if (!response) {
+                response = '<empty_response>';
+            }
             content = JSON.stringify(response, null, 2);
         }
 
