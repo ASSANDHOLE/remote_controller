@@ -1,6 +1,5 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::result;
 
 use chrono::{DateTime, NaiveDateTime};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
@@ -368,6 +367,16 @@ async fn handle_connection(
             Ok(msg) => {
                 // To JSON
                 let msg = if let Ok(s) = msg.to_str() { s } else { break };
+
+                // Check if the message is a number for keep-alive
+                if let Ok(number) = msg.parse::<i64>() {
+                    let mut device_data = devices.write().await;
+                    let device = device_data.get_mut(&device_uuid).unwrap();
+                    device.send(Message::text(number.to_string())).unwrap();
+                    continue;
+                }
+
+                // Handle JSON messages
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(msg) {
                     if let Some(json_obj) = json.as_object() {
                         if let Some(transaction) = json_obj.get("transaction") {

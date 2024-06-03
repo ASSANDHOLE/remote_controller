@@ -4,9 +4,12 @@ use std::process::Command;
 
 use futures_util::{SinkExt, StreamExt};
 use rdev::{simulate, EventType, Key};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::time::{sleep, Duration};
+use tokio::sync::mpsc;
+use tokio::time::{sleep, interval, Duration};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use url::Url;
@@ -35,21 +38,44 @@ async fn connect_and_handle_messages(config: Config) {
     let (ws_stream, _) = conn.unwrap();
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut rx = UnboundedReceiverStream::new(rx);
+
     // Send the device UUID to the server
     let uuid_message = Message::text(&config.device_uuid.clone());
     ws_tx.send(uuid_message).await.unwrap();
+
+    tokio::task::spawn(async move {
+        while let Some(message) = rx.next().await {
+            ws_tx.send(message).await.unwrap();
+        }
+    });
+
+    // Spawn a task to send keep-alive messages
+    let mut keep_alive_interval = interval(Duration::from_secs(30)); // Send every 30 seconds
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            keep_alive_interval.tick().await;
+            let timestamp = Utc::now().timestamp().to_string();
+            tx_clone.send(Message::text(timestamp)).unwrap();
+        }
+    });
 
     // Handle incoming messages
     while let Some(result) = ws_rx.next().await {
         match result {
             Ok(msg) => {
+                if process_keepalive(&msg) {
+                    continue;
+                }
                 // Process the incoming message and generate a response
                 let response = process_message(msg, &config).await;
 
                 // Send the response back to the server
                 if let Some(response) = response {
                     let response = Message::text(response);
-                    ws_tx.send(response).await.unwrap();
+                    tx.send(response).unwrap();
                 } else {
                     return;
                 }
@@ -155,9 +181,19 @@ fn exec_get_output(command: &String) -> Option<(i32, String)> {
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ))
         };
+    } else {
+        return Some((-1, "An unknown error occurred.".to_string()))
     }
+}
 
-    None
+fn process_keepalive(msg: &Message) -> bool {
+    if let Ok(text) = msg.to_text() {
+        if text.parse::<i64>().is_ok() {
+            // It's a valid i64 timestamp, hence a keep-alive message
+            return true;
+        }
+    }
+    false
 }
 
 async fn process_message(msg: Message, config: &Config) -> Option<String> {
