@@ -94,7 +94,7 @@
     <button onclick="controlDevice('audio next')">Next Track</button>
     <button onclick="controlDevice('audio prev')">Prev Track</button>
     <button onclick="startScreensaver()">Start Screensaver</button>
-    <input type="text" class="input-as-button" id="screensaverPath" value="C:\\Windows\\System32\\scrnsave.scr" placeholder="Screensaver Path">
+    <input type="text" class="input-as-button" id="screensaverPath" value="C:\Windows\System32\scrnsave.scr" placeholder="Screensaver Path">
 </div>
 
 <h3>Execute Command (Will search in PATH)</h3>
@@ -126,7 +126,7 @@
 
     async function startScreensaver() {
         const screensaverPath = document.getElementById('screensaverPath').value;
-        const action = `exec ${screensaverPath} /s`;
+        const action = `exec powershell.exe -c Start-Process -FilePath '${screensaverPath}' -ArgumentList '/s'`;
         await controlDevice(action);
     }
 
