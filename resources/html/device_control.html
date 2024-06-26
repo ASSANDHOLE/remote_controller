@@ -97,9 +97,21 @@
     <input type="text" class="input-as-button" id="screensaverPath" value="C:\Windows\System32\scrnsave.scr" placeholder="Screensaver Path">
 </div>
 
+<h3>Clipboard Access</h3>
+<textarea id="clipboardContent" placeholder="Enter text to set in clipboard" style="width: 100%; padding: 10px; font-size: 18px; margin-bottom: 10px;"></textarea>
+<div class="control-buttons">
+    <button onclick="setClipboardText()">Set Clipboard Text</button>
+    <button onclick="getClipboardText()">Get Clipboard Text</button>
+</div>
+<div id="clipboardResponseArea" style="width: 100%; padding: 10px; font-size: 16px; margin-top: 10px; border: 1px solid #ccc; white-space: pre-wrap;"></div>
+
+
 <h3>Execute Command (Will search in PATH)</h3>
 <label>
     <input type="checkbox" id="shellPrefixCheckbox" onclick="toggleShellPrefixInput()"> Use custom shell prefix
+</label>
+<label>
+    <input type="checkbox" id="clearTextareaCheckbox"> Clear textarea after submit
 </label>
 <div id="shellPrefixContainer">
     <input type="text" id="shellPrefixInput" placeholder="Shell Prefix (e.g., bash -c)" autocapitalize="off" autocorrect="off">
@@ -108,8 +120,10 @@
 <button onclick="submitCustomAction()">Submit Command</button>
 <div id="loadingSpinner"></div>
 
+
 <h3>Response</h3>
 <button onclick="copyOutput()">Copy Output</button>
+<button onclick="document.getElementById('responseArea').innerText = ''">Clear Output</button>
 <div id="responseArea"></div>
 
 
@@ -130,10 +144,30 @@
         await controlDevice(action);
     }
 
+    async function setClipboardText() {
+        const clipboardContent = document.getElementById('clipboardContent').value;
+        if (clipboardContent === "") {
+            alert("Please enter some text to set in clipboard.");
+            return;
+        }
+        const action = `clip set ${clipboardContent}`;
+        await sendActionRequest(action, false, displayClipboardResponse);
+    }
+
+    async function getClipboardText() {
+        const action = "clip get";
+        await sendActionRequest(action, false, displayClipboardResponse);
+    }
+
+    function displayClipboardResponse(response) {
+        document.getElementById('clipboardResponseArea').innerText = response;
+    }
+
     async function submitCustomAction() {
         const customActionInput = document.getElementById('customActionInput');
         const shellPrefixInput = document.getElementById('shellPrefixInput');
         const loadingSpinner = document.getElementById('loadingSpinner');
+        const clearTextareaCheckbox = document.getElementById('clearTextareaCheckbox');
 
         let action = customActionInput.value;
         const checkBoxState = document.getElementById('shellPrefixCheckbox').checked;
@@ -150,14 +184,15 @@
         loadingSpinner.style.display = 'block'; // Show loading spinner
 
         const result = await sendActionRequest(action);
-        if (result) {
+        if (result && clearTextareaCheckbox.checked) {
             customActionInput.value = "";
         }
 
         loadingSpinner.style.display = 'none'; // Hide loading spinner
     }
 
-    async function sendActionRequest(action, noResponse = false) {
+
+    async function sendActionRequest(action, noResponse = false, displayFn = displayResponse) {
         const TIMEOUT = 5000;  // 5 seconds in milliseconds
 
         const timeoutPromise = new Promise((_, reject) => {
@@ -192,7 +227,7 @@
                 } catch {
                     responseBody = await response.text();
                 }
-                return displayResponse(responseBody);
+                return displayFn(responseBody);
             } else {
                 alert(`Error: ${response.status} ${response.statusText}`);
                 return false;

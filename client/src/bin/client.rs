@@ -14,6 +14,8 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use url::Url;
 use which::which;
+use arboard::Clipboard;
+use regex::Regex;
 
 #[derive(Clone, Deserialize)]
 struct Config {
@@ -120,6 +122,24 @@ fn processing_audio_setting(action: &String, config: &Config) -> i32 {
     };
 }
 
+fn clipboard_set_content(content: String) -> bool {
+    let clipboard_result = Clipboard::new();
+
+    if let Ok(mut clipboard) = clipboard_result {
+        return clipboard.set_text(content).is_ok();
+    }
+    false
+}
+
+fn clipboard_get_content() -> Option<String> {
+    let clipboard_result = Clipboard::new();
+
+    if let Ok(mut clipboard) = clipboard_result {
+        return clipboard.get_text().ok();
+    }
+    None
+}
+
 fn exec_get_output(command: &String) -> Option<(i32, String)> {
     let mut args: Vec<&str> = command.split_whitespace().collect();
 
@@ -210,12 +230,14 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
     /// # Message format:
     ///
     /// { transaction: str, action: str }
-    /// action: [audio [vol_up, vol_down, vol_mute, pause, next, prev] | exec [...]]
+    /// action: [audio [vol_up, vol_down, vol_mute, pause, next, prev] | clip [get, set <content>] | exec [...]]
     ///
     /// # Response format:
     ///
     /// For audio:
     ///   { transaction: str, status: bool }
+    /// For clip:
+    ///   { transaction: str, status: bool, message: str }
     /// For exec:
     ///   { transaction: str, status: true, message: { success: bool, execution: bool, output: str } }
     ///   { transaction: str, status: false, message: { cause: str } }
@@ -249,6 +271,32 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
                         }
                     }
                     Some(serde_json::json!({"transaction": transaction, "status": false}).to_string())
+                }
+                "clip" => {
+                    if let Some(action) = action_str.split_whitespace().nth(1) {
+                        match action {
+                            "get" => {
+                                let content = clipboard_get_content();
+                                if let Some(content) = content {
+                                    Some(serde_json::json!({"transaction": transaction, "status": true, "message": content}).to_string())
+                                } else {
+                                    Some(serde_json::json!({"transaction": transaction, "status": false, "message": ""}).to_string())
+                                }
+                            }
+                            "set" => {
+                                // Get the rest of the string after the subcommand
+                                let re = Regex::new(r"^\s*clip\s+set\s+").unwrap();
+                                let content = re.replace(action_str, "").to_string();
+                                let status = clipboard_set_content(content);
+                                Some(serde_json::json!({"transaction": transaction, "status": status, "message": ""}).to_string())
+                            }
+                            _ => {
+                                Some(serde_json::json!({"transaction": transaction, "status": false, "message": ""}).to_string())
+                            }
+                        }
+                    } else {
+                        Some(serde_json::json!({"transaction": transaction, "status": false, "message": {"cause": "Action Not Found."}}).to_string())
+                    }
                 }
                 "exec" => {
                     let output = exec_get_output(&action_str.to_string());
