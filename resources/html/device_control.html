@@ -16,6 +16,12 @@
             text-align: center;
             margin-bottom: 20px;
         }
+        .button-container {
+            display: flex;
+            justify-content: flex-start; /* Align buttons to the left */
+            gap: 10px; /* Space between buttons */
+            margin-bottom: -30px; /* Space between buttons and content area */
+        }
         .control-buttons {
             display: flex;
             flex-wrap: wrap;
@@ -45,20 +51,52 @@
             border-radius: 4px;
             box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
         }
-        #customActionInput {
-            width: 100%;
+        #customActionInput, #clipboardContent {
+            width: 98%;
             padding: 10px;
             font-size: 18px;
             margin-bottom: 10px;
         }
-        #responseArea {
-            width: 100%;
+        #commandContentArea, #clipboardContentArea {
+            width: 98%;
             padding: 10px;
             font-size: 16px;
             margin-top: 10px;
             border: 1px solid #ccc;
             white-space: pre-wrap;  /* Preserves whitespace and newlines */
         }
+
+        .response-area {
+            width: 100%;
+            padding: 0;
+            font-size: 16px;
+            margin-top: -20px;
+            border: none;
+            white-space: pre-wrap;  /* Preserves whitespace and newlines */
+            box-sizing: border-box; /* Ensures padding is included in the width */
+        }
+
+        .content {
+            max-height: 100px; /* Limit the height for initial display */
+            overflow: hidden;  /* Hide overflow content */
+            position: relative;
+            padding: 0; /* Remove padding */
+        }
+
+        .content.expanded {
+            max-height: none; /* Remove height limit when expanded */
+        }
+
+        .show-more {
+            display: none; /* Hide by default, shown conditionally via JS */
+            text-align: right;
+            cursor: pointer;
+            color: #007BFF;
+            background: linear-gradient(to bottom, transparent, #f5f5f5);
+            margin-top: -30px;
+            padding: 5px;
+        }
+
 
         #loadingSpinner {
             display: none;
@@ -98,12 +136,19 @@
 </div>
 
 <h3>Clipboard Access</h3>
-<textarea id="clipboardContent" placeholder="Enter text to set in clipboard" style="width: 100%; padding: 10px; font-size: 18px; margin-bottom: 10px;"></textarea>
+<textarea id="clipboardContent" placeholder="Enter text to set in clipboard"></textarea>
 <div class="control-buttons">
     <button onclick="setClipboardText()">Set Clipboard Text</button>
     <button onclick="getClipboardText()">Get Clipboard Text</button>
 </div>
-<div id="clipboardResponseArea" style="width: 100%; padding: 10px; font-size: 16px; margin-top: 10px; border: 1px solid #ccc; white-space: pre-wrap;"></div>
+<div id="clipboardResponseArea" class="response-area">
+    <div class="button-container">
+        <button onclick="copyOutput('clipboardContentArea')">Copy Output</button>
+        <button onclick="clearContent('clipboardContentArea', 'clipboardResponseArea')">Clear Output</button>
+    </div>
+    <div class="content" id="clipboardContentArea"></div>
+    <span class="show-more" onclick="toggleContent('clipboardResponseArea')">Show more</span>
+</div>
 
 
 <h3>Execute Command (Will search in PATH)</h3>
@@ -122,9 +167,14 @@
 
 
 <h3>Response</h3>
-<button onclick="copyOutput()">Copy Output</button>
-<button onclick="document.getElementById('responseArea').innerText = ''">Clear Output</button>
-<div id="responseArea"></div>
+<div id="commandResponseArea" class="response-area">
+    <div class="button-container">
+        <button onclick="copyOutput('commandContentArea')">Copy Output</button>
+        <button onclick="clearContent('commandContentArea', 'commandResponseArea')">Clear Output</button>
+    </div>
+    <div class="content" id="commandContentArea"></div>
+    <span class="show-more" onclick="toggleContent('commandResponseArea')">Show more</span>
+</div>
 
 
 <h3>Back to Index</h3>
@@ -160,7 +210,8 @@
     }
 
     function displayClipboardResponse(response) {
-        document.getElementById('clipboardResponseArea').innerText = response;
+        document.getElementById('clipboardContentArea').innerText = response;
+        checkContentHeight('clipboardResponseArea');
     }
 
     async function submitCustomAction() {
@@ -191,8 +242,42 @@
         loadingSpinner.style.display = 'none'; // Hide loading spinner
     }
 
+    function clearContent(contentAreaId, responseAreaId) {
+        document.getElementById(contentAreaId).innerText = '';
+        checkContentHeight(responseAreaId);
+    }
 
-    async function sendActionRequest(action, noResponse = false, displayFn = displayResponse) {
+    function toggleContent(areaId) {
+        const respArea = document.getElementById(areaId);
+        const contentArea = respArea.querySelector('.content');
+        const showMore = respArea.querySelector('.show-more');
+        if (contentArea.classList.contains('expanded')) {
+            contentArea.classList.remove('expanded');
+            showMore.innerText = 'Show more';
+        } else {
+            contentArea.classList.add('expanded');
+            showMore.innerText = 'Show less';
+        }
+    }
+
+    function checkContentHeight(areaId) {
+        const responseArea = document.getElementById(areaId);
+        const contentArea = responseArea.querySelector('.content');
+        const showMore = responseArea.querySelector('.show-more');
+        if (contentArea.scrollHeight > contentArea.clientHeight) {
+            showMore.style.display = 'block';
+        } else {
+            showMore.style.display = 'none';
+        }
+    }
+
+    // Call checkContentHeight on content change or load
+    document.addEventListener("DOMContentLoaded", function() {
+        checkContentHeight('commandResponseArea');
+        checkContentHeight('clipboardResponseArea');
+    });
+
+    async function sendActionRequest(action, noResponse = false, displayFn = displayCommandOutput) {
         const TIMEOUT = 5000;  // 5 seconds in milliseconds
 
         const timeoutPromise = new Promise((_, reject) => {
@@ -329,8 +414,8 @@
         return result;
     }
 
-    async function copyOutput() {
-        const responseArea = document.getElementById('responseArea');
+    async function copyOutput(elementId) {
+        const responseArea = document.getElementById(elementId);
         try {
             await navigator.clipboard.writeText(responseArea.innerText);
             alert("Output copied to clipboard!");
@@ -344,8 +429,8 @@
 
     }
 
-    function displayResponse(response) {
-        const responseArea = document.getElementById('responseArea');
+    function displayCommandOutput(response) {
+        const responseArea = document.getElementById('commandContentArea');
         let content = '';
 
         if (typeof response === "string") {
@@ -355,17 +440,13 @@
             responseArea.style.color = response.execution === 0 ? "black" : "orange";
             content = ansiToHtml(response.output) || '<empty_response>';  // Use the conversion function here
             responseArea.innerHTML = content;
-            return true;
         } else {
             responseArea.style.color = "red";
-            if (!response) {
-                response = '<empty_response>';
-            }
-            content = JSON.stringify(response, null, 2);
+            content = JSON.stringify(response, null, 2) || '<empty_response>';
         }
 
         responseArea.innerHTML = content;  // Use innerHTML instead of value to render HTML tags
-        return false;
+        checkContentHeight('commandResponseArea');
     }
 
     function toggleShellPrefixInput() {
