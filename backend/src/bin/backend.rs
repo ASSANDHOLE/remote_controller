@@ -669,7 +669,7 @@ async fn main() {
                 HTML_DIR_PATH.as_str()
             )))
             .or(warp::any()
-                .map(|| warp::redirect::temporary(warp::http::Uri::from_static("/index.html")))),
+                .map(|| warp::redirect::temporary(warp::http::Uri::from_static("/login.html")))),
     );
 
     let html_dir_route = warp::get().and(
