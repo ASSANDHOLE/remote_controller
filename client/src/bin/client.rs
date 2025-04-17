@@ -5,7 +5,7 @@ use std::process::Command;
 use futures_util::{SinkExt, StreamExt};
 use rdev::{simulate, EventType, Key};
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, interval, Duration};
@@ -14,8 +14,11 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use url::Url;
 use which::which;
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
 use regex::Regex;
+use std::borrow::Cow;
+use image::load_from_memory;
+use base64::{Engine as _, alphabet, engine::{self, general_purpose}};
 
 #[derive(Clone, Deserialize)]
 struct Config {
@@ -24,6 +27,27 @@ struct Config {
     use_media_control_app: bool,
     media_control_app_path: Option<String>,
     media_control_app_shell_prefix: String,
+}
+
+#[derive(Deserialize)]
+struct ClipboardInput {
+    r#type: String, // "text" or "image"
+    data: String,
+}
+
+#[derive(Serialize)]
+struct ClipboardOutput {
+    r#type: String, // "text" or "image"
+    data: String,
+}
+
+/// Decode base64 PNG/JPEG and extract raw RGBA + width/height
+fn decode_image_and_dimensions(base64_str: &str) -> Option<(Vec<u8>, usize, usize)> {
+    let decoded = general_purpose::STANDARD.decode(base64_str).ok()?;
+    let img = load_from_memory(&decoded).ok()?;
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some((rgba.into_raw(), width as usize, height as usize))
 }
 
 async fn connect_and_handle_messages(config: Config) {
@@ -122,20 +146,73 @@ fn processing_audio_setting(action: &String, config: &Config) -> i32 {
     };
 }
 
-fn clipboard_set_content(content: String) -> bool {
-    let clipboard_result = Clipboard::new();
+// fn clipboard_set_content(content: String) -> bool {
+//     let clipboard_result = Clipboard::new();
+// 
+//     if let Ok(mut clipboard) = clipboard_result {
+//         return clipboard.set_text(content).is_ok();
+//     }
+//     false
+// }
+// 
+// fn clipboard_get_content() -> Option<String> {
+//     let clipboard_result = Clipboard::new();
+// 
+//     if let Ok(mut clipboard) = clipboard_result {
+//         return clipboard.get_text().ok();
+//     }
+//     None
+// }
 
-    if let Ok(mut clipboard) = clipboard_result {
-        return clipboard.set_text(content).is_ok();
+/// Set clipboard from a structured JSON string
+fn clipboard_set_content(json_input: String) -> bool {
+    let parsed: Result<ClipboardInput, _> = serde_json::from_str(&json_input);
+    if parsed.is_err() {
+        return false;
     }
-    false
+
+    let clipboard_result = Clipboard::new();
+    if let Ok(mut clipboard) = clipboard_result {
+        let ClipboardInput { r#type, data } = parsed.unwrap();
+        match r#type.as_str() {
+            "text" => clipboard.set_text(data).is_ok(),
+            "image" => {
+                if let Some((bytes, width, height)) = decode_image_and_dimensions(&data) {
+                    let image = ImageData {
+                        width,
+                        height,
+                        bytes: Cow::Owned(bytes),
+                    };
+                    clipboard.set_image(image).is_ok()
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
+/// Get clipboard content and return as a JSON string
 fn clipboard_get_content() -> Option<String> {
     let clipboard_result = Clipboard::new();
-
     if let Ok(mut clipboard) = clipboard_result {
-        return clipboard.get_text().ok();
+        if let Ok(text) = clipboard.get_text() {
+            let output = ClipboardOutput {
+                r#type: "text".to_string(),
+                data: text,
+            };
+            return serde_json::to_string(&output).ok();
+        } else if let Ok(image) = clipboard.get_image() {
+            let encoded = general_purpose::STANDARD.encode(image.bytes.as_ref());
+            let output = ClipboardOutput {
+                r#type: "image".to_string(),
+                data: encoded,
+            };
+            return serde_json::to_string(&output).ok();
+        }
     }
     None
 }
@@ -252,7 +329,7 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
     if json.is_null() {
         return None;
     }
-    return if let Some(transaction) = json.get("transaction") {
+    if let Some(transaction) = json.get("transaction") {
         if let Some(action) = json.get("action") {
             // Get Operator by splitting the action string of the first space
             let action_str = action.as_str().unwrap_or("").trim();
@@ -315,7 +392,7 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
         }
     } else {
         None
-    };
+    }
 }
 
 #[tokio::main]

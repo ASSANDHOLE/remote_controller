@@ -136,10 +136,16 @@
 </div>
 
 <h3>Clipboard Access</h3>
-<textarea id="clipboardContent" placeholder="Enter text to set in clipboard"></textarea>
+<div id="clipboardTextWrapper">
+    <textarea id="clipboardContent" placeholder="Enter text or paste image here..."></textarea>
+</div>
+<div id="clipboardImageWrapper" style="display: none;">
+    <img id="clipboardPreviewImage" style="max-width:100%; margin-bottom:10px;" />
+    <button onclick="resetClipboardInput()">Reset</button>
+</div>
 <div class="control-buttons">
-    <button onclick="setClipboardText()">Set Clipboard Text</button>
-    <button onclick="getClipboardText()">Get Clipboard Text</button>
+    <button id="setClipboardBtn" onclick="setClipboard()">Set Clipboard</button>
+    <button onclick="getClipboard()">Get Clipboard</button>
 </div>
 <div id="clipboardResponseArea" class="response-area">
     <div class="button-container">
@@ -183,6 +189,7 @@
 <script>
     const urlParams = new URLSearchParams(window.location.search);
     const deviceUuid = urlParams.get('uuid');
+    let clipboardImageB64 = null;
 
     async function controlDevice(action) {
         await sendActionRequest(action, true);
@@ -194,25 +201,59 @@
         await controlDevice(action);
     }
 
-    async function setClipboardText() {
-        const clipboardContent = document.getElementById('clipboardContent').value;
-        if (clipboardContent === "") {
-            alert("Please enter some text to set in clipboard.");
-            return;
+    async function setClipboard() {
+        if (clipboardImageBase64) {
+            const subAction = JSON.stringify({
+                type: 'image',
+                data: clipboardImageBase64
+            });
+            const action = `clip set ${subAction}`;
+            await sendActionRequest(action, false, displayClipboardResponse);
+        } else {
+            const clipboardContent = document.getElementById('clipboardContent').value.trim();
+            if (!clipboardContent) {
+                alert("Please enter some text or paste an image.");
+                return;
+            }
+            const subAction = JSON.stringify({
+                type: 'text',
+                data: clipboardContent
+            });
+            const action = `clip set ${subAction}`;
+            await sendActionRequest(action, false, displayClipboardResponse);
         }
-        const action = `clip set ${clipboardContent}`;
-        await sendActionRequest(action, false, displayClipboardResponse);
     }
 
-    async function getClipboardText() {
+    async function getClipboard() {
         const action = "clip get";
         await sendActionRequest(action, false, displayClipboardResponse);
     }
 
     function displayClipboardResponse(response) {
-        document.getElementById('clipboardContentArea').innerText = response;
+        // CHANGED: Always expect response of shape { type: 'text' | 'image', data: <...> }
+        if (!response || !response.type || !response.data) {
+            document.getElementById('clipboardContentArea').innerText = '<invalid_response>';
+            resetClipboardInput();
+            return;
+        }
+
+        if (response.type === 'image') {
+            const imgSrc = `data:image/png;base64,${response.data}`;
+            clipboardImageBase64 = response.data;
+            showClipboardImagePreview(imgSrc); // Show preview + hide textarea
+            document.getElementById('clipboardContentArea').innerHTML = `<img src="${imgSrc}" style="max-width:100%;">`;
+        } else if (response.type === 'text') {
+            resetClipboardInput(); // Show textarea
+            document.getElementById('clipboardContent').value = response.data;
+            document.getElementById('clipboardContentArea').innerText = response.data;
+        } else {
+            document.getElementById('clipboardContentArea').innerText = '<unknown_type>';
+            resetClipboardInput();
+        }
+
         checkContentHeight('clipboardResponseArea');
     }
+
 
     async function submitCustomAction() {
         const customActionInput = document.getElementById('customActionInput');
@@ -271,10 +312,43 @@
         }
     }
 
+    function showClipboardImagePreview(dataURL) {
+        document.getElementById('clipboardTextWrapper').style.display = 'none';
+        document.getElementById('clipboardImageWrapper').style.display = 'block';
+        document.getElementById('clipboardPreviewImage').src = dataURL;
+        document.getElementById('setClipboardBtn').innerText = "Set Clipboard Image";
+    }
+
+    // --- NEW: Reset view to text mode
+    function resetClipboardInput() {
+        clipboardImageBase64 = null;
+        document.getElementById('clipboardContent').value = '';
+        document.getElementById('clipboardTextWrapper').style.display = 'block';
+        document.getElementById('clipboardImageWrapper').style.display = 'none';
+        document.getElementById('setClipboardBtn').innerText = "Set Clipboard Text";
+    }
+
     // Call checkContentHeight on content change or load
     document.addEventListener("DOMContentLoaded", function() {
         checkContentHeight('commandResponseArea');
         checkContentHeight('clipboardResponseArea');
+    });
+
+    document.getElementById('clipboardContent').addEventListener('paste', function (event) {
+        const items = event.clipboardData.items;
+        for (let item of items) {
+            if (item.type.startsWith('image/')) {
+                const blob = item.getAsFile();
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    clipboardImageBase64 = e.target.result.split(',')[1];
+                    showClipboardImagePreview(e.target.result); // base64 DataURL
+                };
+                reader.readAsDataURL(blob);
+                event.preventDefault();
+                break;
+            }
+        }
     });
 
     async function sendActionRequest(action, noResponse = false, displayFn = displayCommandOutput) {
@@ -416,17 +490,35 @@
 
     async function copyOutput(elementId) {
         const responseArea = document.getElementById(elementId);
+
+        // Check if an image is present
+        const img = responseArea.querySelector('img');
+
         try {
-            await navigator.clipboard.writeText(responseArea.innerText);
-            alert("Output copied to clipboard!");
+            if (img) {
+                // --- Copy image to clipboard ---
+                const response = await fetch(img.src);
+                const blob = await response.blob();
+
+                await navigator.clipboard.write([
+                    new ClipboardItem({
+                        [blob.type]: blob
+                    })
+                ]);
+
+                alert("Image copied to clipboard!");
+            } else {
+                // --- Copy text to clipboard ---
+                const text = responseArea.innerText.trim();
+                await navigator.clipboard.writeText(text);
+                alert("Text copied to clipboard!");
+            }
         } catch (err) {
-            alert("Failed to copy text: " + err);
+            alert("Failed to copy content: " + err);
         }
 
-        // (Optional) Deselect the text (to avoid leaving the text highlighted)
         responseArea.blur();
         window.getSelection().removeAllRanges();
-
     }
 
     function displayCommandOutput(response) {
