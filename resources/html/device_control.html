@@ -208,7 +208,7 @@
                 data: clipboardImageBase64
             });
             const action = `clip set ${subAction}`;
-            await sendActionRequest(action, false, displayClipboardResponse);
+            await sendActionRequest(action, false, (..._) => {});
         } else {
             const clipboardContent = document.getElementById('clipboardContent').value.trim();
             if (!clipboardContent) {
@@ -220,7 +220,7 @@
                 data: clipboardContent
             });
             const action = `clip set ${subAction}`;
-            await sendActionRequest(action, false, displayClipboardResponse);
+            await sendActionRequest(action, false, (..._) => {});
         }
     }
 
@@ -385,6 +385,9 @@
                     responseBody = await response.json();
                 } catch {
                     responseBody = await response.text();
+                    try {
+                        responseBody = JSON.parse(responseBody);
+                    } catch (e) {}
                 }
                 return displayFn(responseBody);
             } else {

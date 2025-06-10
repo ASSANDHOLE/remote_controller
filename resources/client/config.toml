@@ -18,3 +18,11 @@ media_control_app_path = "/path/to/controller.executable"
 # The actual command will be media_control_app_shell_prefix media_control_app_path
 # E.g. pwsh -c /path/to/controller.executable <action>
 media_control_app_shell_prefix = "pwsh -c"
+# 0 or 1, if 1, use custom clipboard app to get clipboard content (image and text)
+use_custom_clipboard_app = "0"
+# Required <only> if use_custom_clipboard_app is set to 1
+# Need to return text or image (in base64) in stdout;
+# And must accept a '--json' argument to return JSON output
+# E.g. `{"type": "text", "data": "abcd"}` or `{"type": "image", "data": "base64_encoded_image_content"}`
+custom_clipboard_app_path = "/path/to/clipboard.executable"
+custom_clipboard_app_shell_prefix = "pwsh -c"  # same as media_control_app_shell_prefix

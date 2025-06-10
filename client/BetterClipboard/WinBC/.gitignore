@@ -1,0 +1,22 @@
+# Build output folders
+bin/
+obj/
+
+# NuGet packages (if using `packages/` folder instead of PackageReference)
+packages/
+
+# VS-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build logs
+*.log
+
+# Optional: Rider/JetBrains IDE files
+.idea/
+
+# Optional: OS-specific
+.DS_Store
+Thumbs.db

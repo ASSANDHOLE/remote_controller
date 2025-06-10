@@ -27,6 +27,9 @@ struct Config {
     use_media_control_app: bool,
     media_control_app_path: Option<String>,
     media_control_app_shell_prefix: String,
+    use_custom_clipboard_app: bool,
+    custom_clipboard_app_path: Option<String>,
+    custom_clipboard_app_shell_prefix: String,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +134,7 @@ fn processing_audio_setting(action: &String, config: &Config) -> i32 {
         }
     }
 
-    return if match action.as_str() {
+    if match action.as_str() {
         "vol_up" => press_key_get_result(175),
         "vol_down" => press_key_get_result(174),
         "vol_mute" => press_key_get_result(173),
@@ -143,7 +146,7 @@ fn processing_audio_setting(action: &String, config: &Config) -> i32 {
         1
     } else {
         0
-    };
+    }
 }
 
 // fn clipboard_set_content(content: String) -> bool {
@@ -196,7 +199,20 @@ fn clipboard_set_content(json_input: String) -> bool {
 }
 
 /// Get clipboard content and return as a JSON string
-fn clipboard_get_content() -> Option<String> {
+fn clipboard_get_content(config: &Config) -> Option<String> {
+    if config.use_custom_clipboard_app {
+        if let Some(custom_clipboard_app_path) = &config.custom_clipboard_app_path {
+            let output = exec_get_output(&format!(
+                "exec {} {} --json",
+                config.custom_clipboard_app_shell_prefix, custom_clipboard_app_path
+            ));
+            if let Some((suc, content)) = output {
+                if suc == 0 {
+                    return Some(content);
+                }
+            }
+        }
+    }
     let clipboard_result = Clipboard::new();
     if let Ok(mut clipboard) = clipboard_result {
         if let Ok(text) = clipboard.get_text() {
@@ -267,7 +283,7 @@ fn exec_get_output(command: &String) -> Option<(i32, String)> {
     let output = Command::new(cmd).args(&args).output();
 
     if let Ok(output) = output {
-        return if output.status.success() {
+        if output.status.success() {
             Some((
                 output.status.code().unwrap_or(0),
                 String::from_utf8_lossy(&output.stdout).to_string(),
@@ -277,9 +293,9 @@ fn exec_get_output(command: &String) -> Option<(i32, String)> {
                 output.status.code().unwrap_or(-1),
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ))
-        };
+        }
     } else {
-        return Some((-1, "An unknown error occurred.".to_string()))
+        Some((-1, "An unknown error occurred.".to_string()))
     }
 }
 
@@ -353,7 +369,7 @@ async fn process_message(msg: Message, config: &Config) -> Option<String> {
                     if let Some(action) = action_str.split_whitespace().nth(1) {
                         match action {
                             "get" => {
-                                let content = clipboard_get_content();
+                                let content = clipboard_get_content(&config);
                                 if let Some(content) = content {
                                     Some(serde_json::json!({"transaction": transaction, "status": true, "message": content}).to_string())
                                 } else {
@@ -435,6 +451,25 @@ async fn main() {
             .get("control")
             .expect("Failed to get control")
             .get("media_control_app_shell_prefix")
+            .map(|s| s.to_string())
+            .unwrap_or("".to_string()),
+        use_custom_clipboard_app: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("use_custom_clipboard_app")
+            .expect("Failed to get use_custom_clipboard_app")
+            .parse::<i32>()
+            .expect("Failed to parse use_custom_clipboard_app")
+            != 0,
+        custom_clipboard_app_path: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("custom_clipboard_app_path")
+            .map(|s| s.to_string()),
+        custom_clipboard_app_shell_prefix: config
+            .get("control")
+            .expect("Failed to get control")
+            .get("custom_clipboard_app_shell_prefix")
             .map(|s| s.to_string())
             .unwrap_or("".to_string()),
     };
