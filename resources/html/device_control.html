@@ -244,7 +244,6 @@
             document.getElementById('clipboardContentArea').innerHTML = `<img src="${imgSrc}" style="max-width:100%;">`;
         } else if (response.type === 'text') {
             resetClipboardInput(); // Show textarea
-            document.getElementById('clipboardContent').value = response.data;
             document.getElementById('clipboardContentArea').innerText = response.data;
         } else {
             document.getElementById('clipboardContentArea').innerText = '<unknown_type>';
@@ -385,10 +384,10 @@
                     responseBody = await response.json();
                 } catch {
                     responseBody = await response.text();
-                    try {
-                        responseBody = JSON.parse(responseBody);
-                    } catch (e) {}
                 }
+                try {
+                    responseBody = JSON.parse(responseBody);
+                } catch (e) {}
                 return displayFn(responseBody);
             } else {
                 alert(`Error: ${response.status} ${response.statusText}`);
