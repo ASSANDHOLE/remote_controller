@@ -16,6 +16,7 @@ packages/
 
 # Optional: Rider/JetBrains IDE files
 .idea/
+.vs/
 
 # Optional: OS-specific
 .DS_Store
