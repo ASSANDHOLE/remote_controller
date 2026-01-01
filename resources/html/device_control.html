@@ -118,6 +118,36 @@
             display: none;
             margin-bottom: 10px;
         }
+
+        #timeoutContainer {
+            display: none;
+            margin-bottom: 10px;
+        }
+
+        #blockingOverlay {
+            display: none;                 /* hidden by default */
+            position: fixed;
+            inset: 0;                      /* top:0; right:0; bottom:0; left:0 */
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 9999;
+            display: none;                 /* will switch to flex in JS */
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #ffffff;
+            font-size: 18px;
+        }
+
+        .blocking-spinner {
+            border: 8px solid #f5f5f5;
+            border-top: 8px solid #007BFF;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
     </style>
 </head>
 <body>
@@ -128,14 +158,22 @@
     <button onclick="controlDevice('audio vol_up')">Vol Up</button>
     <button onclick="controlDevice('audio vol_down')">Vol Down</button>
     <button onclick="controlDevice('audio vol_mute')">Mute</button>
-    <button onclick="controlDevice('audio pause')">Pulse</button>
+    <button onclick="controlDevice('audio pause')">Pause/Play</button>
     <button onclick="controlDevice('audio next')">Next Track</button>
     <button onclick="controlDevice('audio prev')">Prev Track</button>
-    <button onclick="startScreensaver()">Start Screensaver</button>
+    <button onclick="controlDevice('exec shutdown -s -t 0')">Shutdown</button>
+    <button onclick="controlDevice('exec rundll32.exe powrprof.dll, SetSuspendState Sleep')">Sleep</button>
     <input type="text" class="input-as-button" id="screensaverPath" value="C:\Windows\System32\scrnsave.scr" placeholder="Screensaver Path">
+    <button onclick="startScreensaver()">Start Screensaver</button>
 </div>
 
 <h3>Clipboard Access</h3>
+<label>
+    <input type="checkbox" id="timeoutCheckbox" onclick="toggleTimeoutInput()"> Use custom timeout, affects every request
+</label>
+<div id="timeoutContainer">
+    <input type="text" id="timeoutInput" placeholder="Timeout in seconds, e.g., 5" autocapitalize="off" autocorrect="off">
+</div>
 <div id="clipboardTextWrapper">
     <textarea id="clipboardContent" placeholder="Enter text or paste image here..."></textarea>
 </div>
@@ -186,10 +224,15 @@
 <h3>Back to Index</h3>
 <button onclick="window.location.href = '/';">Back to Index</button>
 
+<div id="blockingOverlay">
+    <div class="blocking-spinner"></div>
+    <div id="blockingText">Waiting 0s…</div>
+</div>
+
 <script>
     const urlParams = new URLSearchParams(window.location.search);
     const deviceUuid = urlParams.get('uuid');
-    let clipboardImageB64 = null;
+    let clipboardImageBase64 = null;
 
     async function controlDevice(action) {
         await sendActionRequest(action, true);
@@ -351,10 +394,59 @@
     });
 
     async function sendActionRequest(action, noResponse = false, displayFn = displayCommandOutput) {
-        const TIMEOUT = 5000;  // 5 seconds in milliseconds
+        // --- Determine timeout (ms) from checkbox + input, default 10s ---
+        let timeoutMs = 10000;
+        const timeoutCheckbox = document.getElementById('timeoutCheckbox');
+        const timeoutInput = document.getElementById('timeoutInput');
 
+        if (timeoutCheckbox && timeoutCheckbox.checked && timeoutInput) {
+            const v = parseFloat(timeoutInput.value.trim());
+            if (!isNaN(v) && v > 0) {
+                timeoutMs = v * 1000;
+            }
+        }
+        const timeoutSeconds = timeoutMs / 1000;
+
+        // --- Blocking overlay (only when we expect a response) ---
+        const overlay = document.getElementById('blockingOverlay');
+        const blockingText = document.getElementById('blockingText');
+        let elapsedSeconds = 0;
+        let overlayTimerId = null;
+
+        function showBlockingOverlay() {
+            if (noResponse) return; // don't block for fire-and-forget actions
+            elapsedSeconds = 0;
+            if (blockingText) {
+                blockingText.innerText = `Waiting ${elapsedSeconds}s (timeout ${timeoutSeconds}s)…`;
+            }
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            overlayTimerId = setInterval(() => {
+                elapsedSeconds += 1;
+                if (blockingText) {
+                    blockingText.innerText = `Waiting ${elapsedSeconds}s (timeout ${timeoutSeconds}s)…`;
+                }
+            }, 1000);
+        }
+
+        function hideBlockingOverlay() {
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            if (overlayTimerId !== null) {
+                clearInterval(overlayTimerId);
+                overlayTimerId = null;
+            }
+        }
+
+        showBlockingOverlay();
+
+        // --- Timeout promise using the chosen timeoutMs ---
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("Request timed out after 5 seconds")), TIMEOUT);
+            setTimeout(() => {
+                reject(new Error(`Request timed out after ${timeoutSeconds} seconds`));
+            }, timeoutMs);
         });
 
         try {
@@ -364,14 +456,13 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        action: action
-                    })
+                    body: JSON.stringify({ action: action })
                 }),
                 timeoutPromise
             ]);
 
             if (noResponse) {
+                hideBlockingOverlay();
                 if (!response.ok) {
                     console.error(`Error: ${response.status} ${response.statusText}`);
                 }
@@ -388,12 +479,15 @@
                 try {
                     responseBody = JSON.parse(responseBody);
                 } catch (e) {}
+                hideBlockingOverlay();
                 return displayFn(responseBody);
             } else {
+                hideBlockingOverlay();
                 alert(`Error: ${response.status} ${response.statusText}`);
                 return false;
             }
         } catch (error) {
+            hideBlockingOverlay();
             if (!noResponse) {
                 alert(error.message);
             } else {
@@ -402,6 +496,7 @@
             return false;
         }
     }
+
 
     function ansiToHtml(ansiString) {
         const foregroundColors = {
@@ -550,6 +645,16 @@
             shellPrefixContainer.style.display = 'block';
         } else {
             shellPrefixContainer.style.display = 'none';
+        }
+    }
+
+    function toggleTimeoutInput() {
+        const timeoutCheckbox = document.getElementById('timeoutCheckbox');
+        const timeoutContainer = document.getElementById('timeoutContainer');
+        if (timeoutCheckbox.checked) {
+            timeoutContainer.style.display = 'block';
+        } else {
+            timeoutContainer.style.display = 'none';
         }
     }
 
